@@ -241,6 +241,18 @@ class Settings {
 	}
 
 	/**
+	 * Can offloaded media be served over a public URL? Only when a custom
+	 * domain is set: R2's S3 API endpoint requires SigV4 auth and 403s the
+	 * unauthenticated GETs browsers make for <img>/srcset, so without a custom
+	 * domain there is no public URL to rewrite to.
+	 *
+	 * @return bool
+	 */
+	public function serves_public_url() {
+		return '' !== (string) $this->get( 'custom_domain' );
+	}
+
+	/**
 	 * Lazy-load the stored option.
 	 *
 	 * @return array

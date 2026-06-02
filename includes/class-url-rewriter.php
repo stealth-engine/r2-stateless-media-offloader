@@ -78,6 +78,15 @@ class URL_Rewriter {
 	 * Hook the render-time URL filters.
 	 */
 	public function register() {
+		// Only rewrite when offloaded media can actually be served publicly —
+		// i.e. a custom domain is configured. Without one the only R2 URL we
+		// could emit is the authenticated S3 API endpoint, which 403s the
+		// unauthenticated requests browsers make, breaking every image. Leaving
+		// the origin URLs untouched keeps the site working; an admin notice
+		// (see Plugin) flags the misconfiguration.
+		if ( ! $this->settings->serves_public_url() ) {
+			return;
+		}
 		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 		add_filter( 'wp_get_attachment_image_src', array( $this, 'filter_image_src' ), 10, 4 );
 		add_filter( 'wp_calculate_image_srcset', array( $this, 'filter_srcset' ), 10, 5 );

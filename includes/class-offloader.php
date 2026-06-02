@@ -143,25 +143,27 @@ class Offloader {
 			return array();
 		}
 
+		$relative = (string) get_post_meta( $attachment_id, '_wp_attached_file', true );
 		$original = (string) get_post_meta( $attachment_id, '_r2offload_key', true );
 		if ( '' === $original ) {
-			$relative = (string) get_post_meta( $attachment_id, '_wp_attached_file', true );
 			if ( '' === $relative ) {
 				return array();
 			}
 			$original = $this->settings->object_key( $relative );
 		}
 
-		$keys    = array( $original );
-		$dir     = dirname( $original );
-		$dir     = ( '' === $dir || '.' === $dir ) ? '' : trailingslashit( $dir );
+		// Keys live in the stored original's directory (path_prefix may have
+		// changed since sync), but the filename set comes from the shared
+		// Settings::enumerate_files() helper so the delete path can't drift
+		// from the upload/migrate paths. Seed with $original so it's always
+		// included even for the degenerate empty-_wp_attached_file case.
+		$dir = dirname( $original );
+		$dir = ( '' === $dir || '.' === $dir ) ? '' : trailingslashit( $dir );
+
+		$keys     = array( $original );
 		$metadata = wp_get_attachment_metadata( $attachment_id );
-		if ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
-			foreach ( $metadata['sizes'] as $size ) {
-				if ( ! empty( $size['file'] ) ) {
-					$keys[] = $dir . $size['file'];
-				}
-			}
+		foreach ( Settings::enumerate_files( $metadata, $relative ) as $file ) {
+			$keys[] = $dir . $file['filename'];
 		}
 		return array_values( array_unique( $keys ) );
 	}
