@@ -60,9 +60,54 @@ class Settings {
 		}
 		$stored = $this->stored();
 		if ( isset( $stored[ $key ] ) && '' !== $stored[ $key ] ) {
-			return (string) $stored[ $key ];
+			$value = (string) $stored[ $key ];
+			// The secret is stored encrypted at rest; decrypt on read.
+			return ( 'secret_key' === $key ) ? $this->decrypt( $value ) : $value;
 		}
 		return isset( $this->defaults[ $key ] ) ? $this->defaults[ $key ] : '';
+	}
+
+	/**
+	 * Encrypt a value for storage at rest (used for the secret key).
+	 * Keyed off the site's auth salt. Returns plaintext unchanged if OpenSSL
+	 * is unavailable.
+	 *
+	 * @param string $plain
+	 * @return string
+	 */
+	public function encrypt_secret( $plain ) {
+		if ( '' === $plain || ! function_exists( 'openssl_encrypt' ) ) {
+			return $plain;
+		}
+		$key    = hash( 'sha256', wp_salt( 'auth' ), true );
+		$iv     = random_bytes( 16 );
+		$cipher = openssl_encrypt( $plain, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv );
+		if ( false === $cipher ) {
+			return $plain;
+		}
+		return 'r2enc:' . base64_encode( $iv . $cipher );
+	}
+
+	/**
+	 * Decrypt a stored secret. Values without the marker are treated as
+	 * plaintext (legacy / OpenSSL-unavailable installs).
+	 *
+	 * @param string $stored
+	 * @return string
+	 */
+	private function decrypt( $stored ) {
+		if ( 0 !== strpos( $stored, 'r2enc:' ) || ! function_exists( 'openssl_decrypt' ) ) {
+			return $stored;
+		}
+		$raw = base64_decode( substr( $stored, 6 ), true );
+		if ( false === $raw || strlen( $raw ) <= 16 ) {
+			return '';
+		}
+		$iv     = substr( $raw, 0, 16 );
+		$cipher = substr( $raw, 16 );
+		$key    = hash( 'sha256', wp_salt( 'auth' ), true );
+		$plain  = openssl_decrypt( $cipher, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv );
+		return ( false === $plain ) ? '' : $plain;
 	}
 
 	/**

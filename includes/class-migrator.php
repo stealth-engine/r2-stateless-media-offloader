@@ -237,9 +237,12 @@ class Migrator {
 
 		// R2 keys route through Settings::object_key() so the configured
 		// path_prefix is applied consistently with the offloader (SWR-313).
-		$items = array();
-		$items[ $relative ] = array(
-			'key'      => $this->settings->object_key( $relative ),
+		// Key the items map by the computed object key so dedup against sizes
+		// works even when a path_prefix is set.
+		$items        = array();
+		$original_key = $this->settings->object_key( $relative );
+		$items[ $original_key ] = array(
+			'key'      => $original_key,
 			'size'     => '',
 			'filename' => wp_basename( $relative ),
 		);

@@ -56,18 +56,21 @@ class Offloader {
 		}
 
 		$cache_control = $this->settings->get( 'cache_control' );
+		$headers       = ( '' !== $cache_control ) ? array( 'Cache-Control' => $cache_control ) : array();
 		$uploaded      = 0;
+		$uploaded_paths = array();
 
 		foreach ( $files as $local_path => $key ) {
 			if ( ! is_readable( $local_path ) ) {
 				continue;
 			}
-			$result = $this->client->upload_file( $local_path, $key, '', array( 'Cache-Control' => $cache_control ) );
+			$result = $this->client->upload_file( $local_path, $key, '', $headers );
 			if ( is_wp_error( $result ) ) {
 				// Leave local copies in place if any upload fails — never strand media.
 				return $metadata;
 			}
 			++$uploaded;
+			$uploaded_paths[] = $local_path;
 		}
 
 		if ( $uploaded > 0 ) {
@@ -81,9 +84,10 @@ class Offloader {
 				: get_post_meta( $attachment_id, '_wp_attached_file', true );
 			update_post_meta( $attachment_id, '_r2offload_key', $this->settings->object_key( $original_relative ) );
 
-			// Stateless mode: now that every file is safely in R2, drop local copies.
+			// Stateless mode: now that every file is safely in R2, drop the
+			// local copies we actually uploaded (never anything we skipped).
 			if ( 'stateless' === $this->settings->get( 'mode' ) ) {
-				foreach ( array_keys( $files ) as $local_path ) {
+				foreach ( $uploaded_paths as $local_path ) {
 					if ( file_exists( $local_path ) ) {
 						wp_delete_file( $local_path );
 					}

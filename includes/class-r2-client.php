@@ -199,9 +199,17 @@ class R2_Client {
 			wp_mkdir_p( $dir );
 		}
 
-		$bytes = file_put_contents( $local_path, wp_remote_retrieve_body( $response ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		$body  = wp_remote_retrieve_body( $response );
+		$bytes = file_put_contents( $local_path, $body ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
 		if ( false === $bytes ) {
 			return new \WP_Error( 'r2offload_write_failed', __( 'Could not write downloaded object to disk.', 'r2-stateless-media-offload' ) );
+		}
+
+		// Guard against a truncated download: compare against Content-Length.
+		$len = wp_remote_retrieve_header( $response, 'content-length' );
+		if ( '' !== (string) $len && (int) $len !== $bytes ) {
+			wp_delete_file( $local_path );
+			return new \WP_Error( 'r2offload_download_incomplete', __( 'Downloaded object was incomplete.', 'r2-stateless-media-offload' ) );
 		}
 		return true;
 	}

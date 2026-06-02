@@ -21,10 +21,15 @@ echo "==> Starting containers"
 docker compose up -d db wordpress
 
 echo "==> Waiting for database"
+db_ready=false
 for _ in $(seq 1 30); do
-  if docker compose run --rm wpcli wp db check >/dev/null 2>&1; then break; fi
+  if docker compose run --rm wpcli wp db check >/dev/null 2>&1; then db_ready=true; break; fi
   sleep 2
 done
+if [ "$db_ready" != true ]; then
+  echo "ERROR: database did not become ready after 60s." >&2
+  exit 1
+fi
 
 echo "==> Installing WordPress (idempotent)"
 docker compose run --rm wpcli wp core install \

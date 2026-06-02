@@ -106,11 +106,11 @@ $r2offload_locked_mode = $settings->is_constant( 'mode' );
 				<td>
 					<fieldset <?php disabled( $r2offload_locked_mode ); ?>>
 						<label>
-							<input type="radio" name="mode" value="cdn" <?php checked( $r2offload_mode, 'cdn' ); ?> <?php disabled( $r2offload_locked_mode ); ?> />
+							<input type="radio" name="mode" value="cdn" <?php checked( $r2offload_mode, 'cdn' ); ?> />
 							<?php esc_html_e( 'CDN — keep local copies as a fallback (safe on-ramp)', 'r2-stateless-media-offload' ); ?>
 						</label><br />
 						<label>
-							<input type="radio" name="mode" value="stateless" <?php checked( $r2offload_mode, 'stateless' ); ?> <?php disabled( $r2offload_locked_mode ); ?> />
+							<input type="radio" name="mode" value="stateless" <?php checked( $r2offload_mode, 'stateless' ); ?> />
 							<?php esc_html_e( 'Stateless — remove local copies; media lives only in R2', 'r2-stateless-media-offload' ); ?>
 						</label>
 					</fieldset>

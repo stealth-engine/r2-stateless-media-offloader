@@ -93,14 +93,16 @@ class Admin_Settings {
 
 		// Secret: only overwrite when a non-empty value is submitted, so the
 		// "leave blank to keep" password field doesn't wipe a stored secret.
+		// Stored encrypted at rest.
 		if ( ! $this->settings->is_constant( 'secret_key' ) ) {
 			$submitted = isset( $_POST['secret_key'] ) ? trim( wp_unslash( $_POST['secret_key'] ) ) : '';
 			if ( '' !== $submitted ) {
-				$new['secret_key'] = $submitted;
+				$new['secret_key'] = $this->settings->encrypt_secret( $submitted );
 			}
 		}
 
-		update_option( Settings::OPTION_KEY, $new );
+		// autoload = false: keep credentials out of the autoloaded options cache.
+		update_option( Settings::OPTION_KEY, $new, false );
 
 		wp_safe_redirect(
 			add_query_arg(
@@ -145,19 +147,22 @@ jQuery(function($){
 	var $btn = $('#r2offload-test-connection');
 	if ( ! $btn.length ) { return; }
 	var $out = $('#r2offload-test-result');
+	// Render a message as plain text — never as HTML — to avoid injecting
+	// server-supplied content (e.g. an R2 error body) as markup.
+	function show(cls, msg){
+		$out.attr('class','notice ' + cls + ' inline').empty().append($('<p>').text(msg)).show();
+	}
 	$btn.on('click', function(e){
 		e.preventDefault();
 		$btn.prop('disabled', true);
-		$out.attr('class','notice notice-info inline').html('<p>'+R2OFFLOAD.testing+'</p>').show();
+		show('notice-info', R2OFFLOAD.testing);
 		$.post(ajaxurl, { action: R2OFFLOAD.action, nonce: R2OFFLOAD.nonce })
 			.done(function(res){
 				var ok = res && res.success;
 				var msg = (res && res.data && res.data.message) ? res.data.message : (ok ? 'OK' : R2OFFLOAD.failed);
-				$out.attr('class','notice ' + (ok ? 'notice-success' : 'notice-error') + ' inline').html('<p>'+msg+'</p>');
+				show(ok ? 'notice-success' : 'notice-error', msg);
 			})
-			.fail(function(){
-				$out.attr('class','notice notice-error inline').html('<p>'+R2OFFLOAD.failed+'</p>');
-			})
+			.fail(function(){ show('notice-error', R2OFFLOAD.failed); })
 			.always(function(){ $btn.prop('disabled', false); });
 	});
 });

@@ -62,7 +62,10 @@ class Local_Fallback {
 		if ( false === $key ) {
 			return $file;
 		}
-		$this->client->download_object( $key, $file );
+		$restored = $this->client->download_object( $key, $file );
+		if ( is_wp_error( $restored ) ) {
+			error_log( sprintf( 'r2offload: restore failed for %s (attachment %d): %s', $key, (int) $attachment_id, $restored->get_error_message() ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		}
 		return $file;
 	}
 
@@ -87,7 +90,10 @@ class Local_Fallback {
 		$dir = dirname( $original );
 		$dir = ( '.' === $dir || '' === $dir ) ? '' : trailingslashit( $dir );
 		$key = $dir . wp_basename( $filepath );
-		$this->client->download_object( $key, $filepath );
+		$restored = $this->client->download_object( $key, $filepath );
+		if ( is_wp_error( $restored ) ) {
+			error_log( sprintf( 'r2offload: edit-path restore failed for %s (attachment %d): %s', $key, (int) $attachment_id, $restored->get_error_message() ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		}
 		return $filepath;
 	}
 
