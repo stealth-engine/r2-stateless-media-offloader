@@ -47,11 +47,13 @@ final class Plugin {
 			$this->settings->register();
 		}
 
+		// Offload new uploads to R2 (original + all sizes).
+		( new Offloader( $this->client, $this->settings ) )->register();
+
 		// WP-CLI commands (loads its own guard).
 		require_once R2OFFLOAD_PLUGIN_DIR . 'includes/class-cli.php';
 
-		// Components that depend on a configured client are wired in later
-		// milestones (offloader, url rewriter, stream wrapper, migrator).
+		// URL rewriter (306) and stream wrapper (307) are wired in later.
 	}
 
 	/**
