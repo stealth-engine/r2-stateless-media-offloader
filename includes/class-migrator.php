@@ -107,10 +107,11 @@ class Migrator {
 	 */
 	public function migrate_attachment( $attachment_id ) {
 		$result = array(
-			'uploaded' => 0,
-			'skipped'  => 0,
-			'bytes'    => 0,
-			'errors'   => array(),
+			'uploaded'         => 0,
+			'skipped'          => 0,
+			'bytes'            => 0,
+			'errors'           => array(),
+			'original_present' => false,
 		);
 
 		$attachment_id = (int) $attachment_id;
@@ -136,13 +137,15 @@ class Migrator {
 			$this->migrate_item( $attachment_id, $item, $result );
 		}
 
-		// Only flag the attachment as synced when a real upload pass cleared
-		// the queue. Dry-run / verify never write postmeta.
+		// Mark the attachment offloaded once its ORIGINAL is confirmed in R2
+		// (freshly uploaded or already present / adopted). Keying off the
+		// original — not "zero errors across every size" — means a single
+		// flaky size can't block adoption of media that is genuinely in R2.
+		// Dry-run / verify never write postmeta.
 		if (
 			! $this->dry_run
 			&& ! $this->verify
-			&& empty( $result['errors'] )
-			&& ( $result['uploaded'] + $result['skipped'] ) > 0
+			&& ! empty( $result['original_present'] )
 		) {
 			update_post_meta( $attachment_id, self::META_SYNCED, 1 );
 			// Store the original's actual R2 key (SWR-313) so readers resolve
@@ -297,9 +300,14 @@ class Migrator {
 			return;
 		}
 
-		// Real-upload path skips anything already in R2.
+		// Real-upload path: anything already in R2 is adopted, not re-uploaded.
+		// This is what lets the migrator register media copied into R2 by an
+		// external tool (e.g. Cloudflare Super Slurper) without moving bytes.
 		if ( ! $this->dry_run && $this->client->object_exists( $key ) ) {
 			$result['skipped'] += 1;
+			if ( '' === $size ) {
+				$result['original_present'] = true;
+			}
 			return;
 		}
 
@@ -366,6 +374,9 @@ class Migrator {
 
 		$result['uploaded'] += 1;
 		$result['bytes']    += $size_bytes;
+		if ( '' === $size ) {
+			$result['original_present'] = true;
+		}
 	}
 
 	/**
