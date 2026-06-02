@@ -129,10 +129,20 @@ class Offloader {
 	 * path_prefix setting changed since upload. Falls back to the current
 	 * path_prefix when no stored key exists.
 	 *
+	 * Returns nothing for an attachment this plugin never offloaded: deleting
+	 * such an attachment must not issue R2 DELETEs for computed keys, which
+	 * could remove objects the plugin hasn't claimed — e.g. media bulk-copied
+	 * into R2 (Super Slurper) but not yet adopted via `wp r2offload sync`. This
+	 * mirrors the `_r2offload_synced` guard in Settings::resolve_object_key().
+	 *
 	 * @param int $attachment_id
 	 * @return string[]
 	 */
 	private function r2_keys_for( $attachment_id ) {
+		if ( ! get_post_meta( $attachment_id, '_r2offload_synced', true ) ) {
+			return array();
+		}
+
 		$original = (string) get_post_meta( $attachment_id, '_r2offload_key', true );
 		if ( '' === $original ) {
 			$relative = (string) get_post_meta( $attachment_id, '_wp_attached_file', true );
