@@ -69,14 +69,15 @@ class Admin_Settings {
 			'jQuery(function($){
 				var $btn = $("#r2offload-test-connection");
 				var $result = $("#r2offload-test-connection-result");
+				var $form = $("#r2offload-settings-form");
 				$btn.on("click", function(e){
 					e.preventDefault();
 					$btn.prop("disabled", true);
 					$result.removeClass("notice-success notice-error").addClass("notice notice-info").text(%s);
-					$.post(ajaxurl, {
-						action: %s,
-						nonce: %s
-					}).done(function(res){
+					var data = $form.serialize();
+					data += "&action=" + encodeURIComponent(%s);
+					data += "&nonce=" + encodeURIComponent(%s);
+					$.post(ajaxurl, data).done(function(res){
 						if (res.success) {
 							$result.removeClass("notice-info notice-error").addClass("notice-success").text(res.data.message);
 						} else {
@@ -119,43 +120,7 @@ class Admin_Settings {
 			$existing = array();
 		}
 
-		$keys = array(
-			'account_id',
-			'access_key',
-			'secret_key',
-			'bucket',
-			'custom_domain',
-			'cache_control',
-			'mode',
-		);
-
-		foreach ( $keys as $key ) {
-			if ( $this->settings->is_constant( $key ) ) {
-				continue;
-			}
-
-			if ( 'secret_key' === $key ) {
-				// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-				$raw = isset( $_POST[ 'r2offload_' . $key ] ) ? wp_unslash( $_POST[ 'r2offload_' . $key ] ) : '';
-				if ( '' !== $raw ) {
-					$existing[ $key ] = sanitize_text_field( $raw );
-				}
-				continue;
-			}
-
-			if ( 'mode' === $key ) {
-				// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-				$mode = isset( $_POST['r2offload_mode'] ) ? wp_unslash( $_POST['r2offload_mode'] ) : 'cdn';
-				$existing['mode'] = in_array( $mode, array( 'cdn', 'stateless' ), true ) ? $mode : 'cdn';
-				continue;
-			}
-
-			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-			$raw = isset( $_POST[ 'r2offload_' . $key ] ) ? wp_unslash( $_POST[ 'r2offload_' . $key ] ) : '';
-			$existing[ $key ] = sanitize_text_field( $raw );
-		}
-
-		$existing['delete_on_attachment_delete'] = ! empty( $_POST['r2offload_delete_on_attachment_delete'] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$existing = $this->merge_submitted_settings( $existing, wp_unslash( $_POST ), true ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
 
 		update_option( Settings::OPTION_KEY, $existing );
 
@@ -193,7 +158,17 @@ class Admin_Settings {
 			);
 		}
 
+		$previous = get_option( Settings::OPTION_KEY, array() );
+		if ( ! is_array( $previous ) ) {
+			$previous = array();
+		}
+
+		$candidate = $this->merge_submitted_settings( $previous, wp_unslash( $_POST ), false ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		update_option( Settings::OPTION_KEY, $candidate );
+
 		$result = Plugin::instance()->client()->test_connection();
+
+		update_option( Settings::OPTION_KEY, $previous );
 
 		if ( true === $result ) {
 			wp_send_json_success(
@@ -235,10 +210,8 @@ class Admin_Settings {
 
 		$settings = $this->settings;
 
-		$template_path = R2OFFLOAD_PLUGIN_DIR . 'templates/settings-page.php';
-		if ( is_readable( $template_path ) ) {
-			/** @psalm-suppress UnresolvableInclude */
-			require $template_path;
+		if ( is_readable( R2OFFLOAD_PLUGIN_DIR . 'templates/settings-page.php' ) ) {
+			include R2OFFLOAD_PLUGIN_DIR . 'templates/settings-page.php';
 		}
 	}
 
@@ -250,6 +223,59 @@ class Admin_Settings {
 	public function has_stored_secret() {
 		$stored = get_option( Settings::OPTION_KEY, array() );
 		return is_array( $stored ) && ! empty( $stored['secret_key'] );
+	}
+
+	/**
+	 * Merge submitted field values into the option array.
+	 *
+	 * Constant-backed keys are removed from the option so credentials do not
+	 * linger in the database after moving to wp-config.php.
+	 *
+	 * @param array $existing Current option values.
+	 * @param array $source   Request data (typically $_POST).
+	 * @param bool  $apply_delete_flag Whether to read delete_on_attachment_delete.
+	 * @return array
+	 */
+	private function merge_submitted_settings( array $existing, array $source, $apply_delete_flag ) {
+		$keys = array(
+			'account_id',
+			'access_key',
+			'secret_key',
+			'bucket',
+			'custom_domain',
+			'cache_control',
+			'mode',
+		);
+
+		foreach ( $keys as $key ) {
+			if ( $this->settings->is_constant( $key ) ) {
+				unset( $existing[ $key ] );
+				continue;
+			}
+
+			if ( 'secret_key' === $key ) {
+				$raw = isset( $source[ 'r2offload_' . $key ] ) ? $source[ 'r2offload_' . $key ] : '';
+				if ( '' !== $raw ) {
+					$existing[ $key ] = sanitize_text_field( $raw );
+				}
+				continue;
+			}
+
+			if ( 'mode' === $key ) {
+				$mode = isset( $source['r2offload_mode'] ) ? $source['r2offload_mode'] : 'cdn';
+				$existing['mode'] = in_array( $mode, array( 'cdn', 'stateless' ), true ) ? $mode : 'cdn';
+				continue;
+			}
+
+			$raw = isset( $source[ 'r2offload_' . $key ] ) ? $source[ 'r2offload_' . $key ] : '';
+			$existing[ $key ] = sanitize_text_field( $raw );
+		}
+
+		if ( $apply_delete_flag ) {
+			$existing['delete_on_attachment_delete'] = ! empty( $source['r2offload_delete_on_attachment_delete'] );
+		}
+
+		return $existing;
 	}
 
 }

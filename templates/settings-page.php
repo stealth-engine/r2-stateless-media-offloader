@@ -27,7 +27,7 @@ $r2_docs_url = 'https://developers.cloudflare.com/r2/api/s3/tokens/';
 
 	<?php settings_errors( Admin_Settings::PAGE_SLUG ); ?>
 
-	<form method="post" action="">
+	<form method="post" action="" id="r2offload-settings-form">
 		<?php wp_nonce_field( Admin_Settings::NONCE_ACTION, Admin_Settings::NONCE_FIELD ); ?>
 
 		<h2 class="title"><?php esc_html_e( 'R2 Credentials', 'r2-stateless-media-offload' ); ?></h2>
@@ -246,6 +246,9 @@ $r2_docs_url = 'https://developers.cloudflare.com/r2/api/s3/tokens/';
 	<hr />
 
 	<h2><?php esc_html_e( 'Connection', 'r2-stateless-media-offload' ); ?></h2>
+	<p class="description">
+		<?php esc_html_e( 'Tests the credentials currently entered in the form above (including unsaved changes).', 'r2-stateless-media-offload' ); ?>
+	</p>
 	<p>
 		<button type="button" class="button button-secondary" id="r2offload-test-connection">
 			<?php esc_html_e( 'Test Connection', 'r2-stateless-media-offload' ); ?>
