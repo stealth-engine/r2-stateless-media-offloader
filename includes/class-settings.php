@@ -106,6 +106,6 @@ class Settings {
 	 * Register the admin settings page (stub — full UI in SWR-309).
 	 */
 	public function register() {
-		// Settings page + dual-credential form implemented in SWR-309.
+		( new Admin_Settings( $this ) )->register();
 	}
 }
