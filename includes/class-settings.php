@@ -30,6 +30,7 @@ class Settings {
 		'custom_domain' => 'R2OFFLOAD_CUSTOM_DOMAIN',
 		'mode'          => 'R2OFFLOAD_MODE',
 		'cache_control' => 'R2OFFLOAD_CACHE_CONTROL',
+		'path_prefix'   => 'R2OFFLOAD_PATH_PREFIX',
 	);
 
 	/**
@@ -41,6 +42,7 @@ class Settings {
 		'mode'          => 'cdn', // Safe on-ramp. Flip to 'stateless' once verified.
 		'cache_control' => 'public, max-age=31536000',
 		'custom_domain' => '',
+		'path_prefix'   => '', // e.g. 'uploads/'. Governs NEW uploads only.
 	);
 
 	/** @var array|null */
@@ -71,6 +73,26 @@ class Settings {
 	 */
 	public function is_constant( $key ) {
 		return isset( $this->constants[ $key ] ) && defined( $this->constants[ $key ] );
+	}
+
+	/**
+	 * Build the canonical R2 object key for a path relative to the uploads dir.
+	 *
+	 * Single source of truth for key construction — offloader, migrator, URL
+	 * rewriter and stream wrapper all route through this so they can never
+	 * disagree. The `path_prefix` setting governs NEW keys only; existing media
+	 * is resolved from its stored `_r2offload_key` (see SWR-313).
+	 *
+	 * @param string $relative e.g. '2017/03/the-kitsches.jpg'
+	 * @return string e.g. 'uploads/2017/03/the-kitsches.jpg'
+	 */
+	public function object_key( $relative ) {
+		$prefix   = ltrim( $this->get( 'path_prefix' ), '/' );
+		$relative = ltrim( (string) $relative, '/' );
+		if ( '' !== $prefix ) {
+			$prefix = trailingslashit( $prefix );
+		}
+		return $prefix . $relative;
 	}
 
 	/**

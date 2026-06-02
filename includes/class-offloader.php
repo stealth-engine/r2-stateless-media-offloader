@@ -73,6 +73,13 @@ class Offloader {
 		if ( $uploaded > 0 ) {
 			update_post_meta( $attachment_id, '_r2offload_synced', 1 );
 			update_post_meta( $attachment_id, '_r2offload_synced_at', time() );
+			// Store the original's actual R2 key so readers (URL rewriter,
+			// stream wrapper) resolve it independently of the current
+			// path_prefix setting — keeps existing media valid if it changes.
+			$original_relative = isset( $metadata['file'] )
+				? $metadata['file']
+				: get_post_meta( $attachment_id, '_wp_attached_file', true );
+			update_post_meta( $attachment_id, '_r2offload_key', $this->settings->object_key( $original_relative ) );
 
 			// Stateless mode: now that every file is safely in R2, drop local copies.
 			if ( 'stateless' === $this->settings->get( 'mode' ) ) {
@@ -96,11 +103,42 @@ class Offloader {
 		if ( ! $this->settings->is_configured() ) {
 			return;
 		}
-		$metadata = wp_get_attachment_metadata( $attachment_id );
-		$files    = $this->collect_files( is_array( $metadata ) ? $metadata : array(), $attachment_id );
-		foreach ( $files as $key ) {
+		foreach ( $this->r2_keys_for( $attachment_id ) as $key ) {
 			$this->client->delete_object( $key );
 		}
+	}
+
+	/**
+	 * All R2 keys for an attachment (original + every size), resolved from the
+	 * stored `_r2offload_key` so deletes still hit the right objects even if the
+	 * path_prefix setting changed since upload. Falls back to the current
+	 * path_prefix when no stored key exists.
+	 *
+	 * @param int $attachment_id
+	 * @return string[]
+	 */
+	private function r2_keys_for( $attachment_id ) {
+		$original = (string) get_post_meta( $attachment_id, '_r2offload_key', true );
+		if ( '' === $original ) {
+			$relative = (string) get_post_meta( $attachment_id, '_wp_attached_file', true );
+			if ( '' === $relative ) {
+				return array();
+			}
+			$original = $this->settings->object_key( $relative );
+		}
+
+		$keys    = array( $original );
+		$dir     = dirname( $original );
+		$dir     = ( '' === $dir || '.' === $dir ) ? '' : trailingslashit( $dir );
+		$metadata = wp_get_attachment_metadata( $attachment_id );
+		if ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
+			foreach ( $metadata['sizes'] as $size ) {
+				if ( ! empty( $size['file'] ) ) {
+					$keys[] = $dir . $size['file'];
+				}
+			}
+		}
+		return array_values( array_unique( $keys ) );
 	}
 
 	/**
@@ -130,8 +168,9 @@ class Offloader {
 
 		$files = array();
 
-		// Original.
-		$files[ $basedir . $relative ] = $relative;
+		// Original. Local path uses the uploads-relative path; the R2 key
+		// routes through object_key() to apply the configured path_prefix.
+		$files[ $basedir . $relative ] = $this->settings->object_key( $relative );
 
 		// Every registered size (incl. theme/plugin custom sizes).
 		if ( ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
@@ -139,8 +178,8 @@ class Offloader {
 				if ( empty( $size['file'] ) ) {
 					continue;
 				}
-				$key                     = $prefix . $size['file'];
-				$files[ $basedir . $key ] = $key;
+				$relative_size                     = $prefix . $size['file'];
+				$files[ $basedir . $relative_size ] = $this->settings->object_key( $relative_size );
 			}
 		}
 

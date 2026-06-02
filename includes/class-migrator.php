@@ -30,6 +30,7 @@ class Migrator {
 
 	const META_SYNCED    = '_r2offload_synced';
 	const META_SYNCED_AT = '_r2offload_synced_at';
+	const META_KEY       = '_r2offload_key';
 
 	/** @var R2_Client */
 	private $client;
@@ -144,6 +145,9 @@ class Migrator {
 			&& ( $result['uploaded'] + $result['skipped'] ) > 0
 		) {
 			update_post_meta( $attachment_id, self::META_SYNCED, 1 );
+			// Store the original's actual R2 key (SWR-313) so readers resolve
+			// it independently of the current path_prefix.
+			update_post_meta( $attachment_id, self::META_KEY, $this->settings->object_key( $relative ) );
 			// Preserve the original first-sync timestamp on re-runs that find
 			// every item already present in R2.
 			$first_synced_at = get_post_meta( $attachment_id, self::META_SYNCED_AT, true );
@@ -231,9 +235,11 @@ class Migrator {
 		$dir = dirname( $relative );
 		$dir = ( '' === $dir || '.' === $dir ) ? '' : trailingslashit( $dir );
 
+		// R2 keys route through Settings::object_key() so the configured
+		// path_prefix is applied consistently with the offloader (SWR-313).
 		$items = array();
 		$items[ $relative ] = array(
-			'key'      => $relative,
+			'key'      => $this->settings->object_key( $relative ),
 			'size'     => '',
 			'filename' => wp_basename( $relative ),
 		);
@@ -245,7 +251,7 @@ class Migrator {
 					continue;
 				}
 				$filename = (string) $size_data['file'];
-				$key      = $dir . $filename;
+				$key      = $this->settings->object_key( $dir . $filename );
 				if ( isset( $items[ $key ] ) ) {
 					continue; // Sizes can share a filename with the original.
 				}
