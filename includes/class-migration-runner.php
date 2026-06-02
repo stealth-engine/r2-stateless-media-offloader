@@ -183,10 +183,13 @@ class Migration_Runner {
 				$result              = array( 'done' => false );
 			}
 
-			// Re-read the control plane after the (potentially slow) batch. If a
-			// newer start() superseded this run, or a stop() was requested,
-			// respect that decision instead of blindly writing our snapshot back.
-			$current = $this->state();
+			// Re-read the control plane after the (potentially slow) batch. We
+			// keep the RAW stored value too, so the persist below can be a true
+			// compare-and-swap: if start()/stop() writes between this read and
+			// our write, the CAS fails and we discard our stale progress rather
+			// than reviving a stopped run or wiping a fresh restart.
+			$expected_raw = get_option( self::STATE_OPTION, array() );
+			$current      = array_merge( self::default_state(), is_array( $expected_raw ) ? $expected_raw : array() );
 			if ( (string) $current['run_id'] !== $run_id ) {
 				// A different run owns the state now — discard our writes entirely.
 				return $current;
@@ -197,25 +200,63 @@ class Migration_Runner {
 				// job can resume, but honour the stop: stay stopped, don't
 				// reschedule.
 				$state['running'] = false;
-				update_option( self::STATE_OPTION, $state, false );
-				$this->clear_scheduled();
-				return $state;
+				if ( $this->cas_state( $expected_raw, $state ) ) {
+					$this->clear_scheduled();
+				}
+				return $this->state();
 			}
 
 			if ( ! empty( $result['done'] ) ) {
 				$state['running']     = false;
 				$state['finished_at'] = time();
-				update_option( self::STATE_OPTION, $state, false );
-				$this->clear_scheduled();
-				return $state;
+				if ( $this->cas_state( $expected_raw, $state ) ) {
+					$this->clear_scheduled();
+				}
+				return $this->state();
 			}
 
-			update_option( self::STATE_OPTION, $state, false );
-			$this->schedule_next();
-			return $state;
+			if ( $this->cas_state( $expected_raw, $state ) ) {
+				$this->schedule_next();
+			}
+			return $this->state();
 		} finally {
 			$this->release_lock();
 		}
+	}
+
+	/**
+	 * Compare-and-swap the migration state option.
+	 *
+	 * Updates STATE_OPTION to $new only if its stored value still exactly
+	 * matches $expected_raw (the RAW, un-merged value read post-batch). A
+	 * concurrent start()/stop() will have changed the stored value, so the
+	 * UPDATE matches no row and we report failure — the caller then discards
+	 * its stale progress instead of clobbering the newer control-plane state.
+	 *
+	 * @param mixed $expected_raw Value previously read from get_option().
+	 * @param array $new          New state to store.
+	 * @return bool True if this worker's write won.
+	 */
+	private function cas_state( $expected_raw, array $new ) {
+		global $wpdb;
+
+		$rows = $wpdb->query( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare(
+				"UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s",
+				maybe_serialize( $new ),
+				self::STATE_OPTION,
+				maybe_serialize( $expected_raw )
+			)
+		);
+		wp_cache_delete( self::STATE_OPTION, 'options' );
+
+		if ( $rows > 0 ) {
+			return true;
+		}
+		// Zero rows changed: either a concurrent writer moved the value on (real
+		// CAS failure) or our new value equalled the old (a no-op write that is
+		// still the outcome we wanted). Distinguish by re-reading.
+		return maybe_serialize( get_option( self::STATE_OPTION, array() ) ) === maybe_serialize( $new );
 	}
 
 	/**
