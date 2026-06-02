@@ -203,8 +203,15 @@ class Admin_Settings {
 			);
 		}
 
-		$message = is_wp_error( $result ) ? $result->get_error_message() : __( 'Connection test failed.', 'r2-stateless-media-offload' );
-		wp_send_json_error( array( 'message' => $message ) );
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+		}
+
+		wp_send_json_error(
+			array(
+				'message' => __( 'Connection test failed.', 'r2-stateless-media-offload' ),
+			)
+		);
 	}
 
 	/**
@@ -228,9 +235,10 @@ class Admin_Settings {
 
 		$settings = $this->settings;
 
-		$template = R2OFFLOAD_PLUGIN_DIR . 'templates/settings-page.php';
-		if ( is_readable( $template ) ) {
-			include $template;
+		$template_path = R2OFFLOAD_PLUGIN_DIR . 'templates/settings-page.php';
+		if ( is_readable( $template_path ) ) {
+			/** @psalm-suppress UnresolvableInclude */
+			require $template_path;
 		}
 	}
 
