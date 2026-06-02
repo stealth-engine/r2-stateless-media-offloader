@@ -77,6 +77,14 @@ class Admin_Settings {
 		$existing = is_array( $existing ) ? $existing : array();
 		$new      = $existing;
 
+		// Drop any key now locked by a wp-config constant so a stale DB copy
+		// can't linger (or silently re-activate if the constant is removed).
+		foreach ( array_merge( $this->text_fields, array( 'mode', 'secret_key' ) ) as $key ) {
+			if ( $this->settings->is_constant( $key ) ) {
+				unset( $new[ $key ] );
+			}
+		}
+
 		foreach ( $this->text_fields as $key ) {
 			if ( $this->settings->is_constant( $key ) ) {
 				continue; // Locked by wp-config — never store.

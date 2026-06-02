@@ -150,7 +150,14 @@ class R2_Client {
 			return $response;
 		}
 
-		$xml = simplexml_load_string( wp_remote_retrieve_body( $response ) );
+		// LIBXML_NONET blocks network access during parse; defence-in-depth
+		// against XXE on PHP < 8.0 where external entities aren't disabled by
+		// default.
+		$xml = simplexml_load_string(
+			wp_remote_retrieve_body( $response ),
+			'SimpleXMLElement',
+			LIBXML_NOCDATA | LIBXML_NONET
+		);
 		if ( false === $xml ) {
 			return new \WP_Error( 'r2offload_parse_error', __( 'Unable to parse R2 list response.', 'r2-stateless-media-offload' ) );
 		}
