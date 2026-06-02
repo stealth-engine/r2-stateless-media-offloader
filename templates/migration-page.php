@@ -29,7 +29,7 @@ $r2offload_configured = $settings->is_configured();
 	<p class="description" style="max-width:46em;">
 		<?php
 		echo wp_kses_post(
-			__( '<strong>Already copied your media into R2 another way</strong> (e.g. Cloudflare Super Slurper)? Just run Migrate — files already in R2 are detected and registered without re-uploading.', 'r2-stateless-media-offload' )
+			__( '<strong>Already copied your media into R2 another way</strong> (e.g. Cloudflare R2 data migration / Super Slurper)? Just run Migrate — files already in R2 are detected and registered without re-uploading.', 'r2-stateless-media-offload' )
 		);
 		?>
 	</p>

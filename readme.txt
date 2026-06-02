@@ -50,7 +50,7 @@ Yes. The migrator pulls each attachment from wherever it currently lives — loc
 
 = I already copied my media into R2 with another tool. Do I have to upload again? =
 
-No. If your media is already in R2 (for example, copied from Google Cloud Storage with Cloudflare Super Slurper), just run the migration. Files already present in R2 are detected and registered without re-uploading — nothing is copied twice — and the plugin starts serving them from R2.
+No. If your media is already in R2 (for example, copied from Google Cloud Storage using Cloudflare's R2 data migration, also known as Super Slurper), just run the migration. Files already present in R2 are detected and registered without re-uploading — nothing is copied twice — and the plugin starts serving them from R2.
 
 == Changelog ==
 
