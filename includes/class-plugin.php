@@ -56,6 +56,13 @@ final class Plugin {
 		// Stateless read path: restore files from R2 on demand for image ops.
 		( new Local_Fallback( $this->client, $this->settings ) )->register();
 
+		// Background migration runner (cron-driven) + admin UI.
+		$runner = new Migration_Runner( $this->settings );
+		$runner->register();
+		if ( is_admin() ) {
+			( new Admin_Migration( $this->settings, $runner ) )->register();
+		}
+
 		// WP-CLI commands (loads its own guard).
 		require_once R2OFFLOAD_PLUGIN_DIR . 'includes/class-cli.php';
 	}
