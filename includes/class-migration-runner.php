@@ -332,8 +332,15 @@ class Migration_Runner {
 				// CAS lost to a concurrent write — re-read and reconcile again.
 			}
 
-			// Exhausted retries under sustained contention; report current state.
-			return $this->state();
+			// Exhausted retries under sustained contention. We couldn't save this
+			// batch's progress, but we must not leave a "running" state with no
+			// cron event queued, or the migration silently stalls. Re-read and,
+			// if the run is still active, make sure a tick is scheduled to retry.
+			$final = $this->fresh_state();
+			if ( ! empty( $final['running'] ) ) {
+				$this->schedule_next();
+			}
+			return $final;
 		} finally {
 			$this->release_lock();
 		}

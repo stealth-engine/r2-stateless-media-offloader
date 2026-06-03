@@ -221,6 +221,19 @@ class Settings {
 			),
 		);
 
+		// Big-image uploads (WP 5.3+): the attachment points at the down-scaled
+		// "-scaled" file via _wp_attached_file, while the untouched full-res
+		// original is kept alongside it and named in metadata['original_image'].
+		// Include it so it's offloaded/migrated/deleted with everything else.
+		if ( is_array( $metadata ) && ! empty( $metadata['original_image'] ) ) {
+			$orig = (string) $metadata['original_image'];
+			$files[] = array(
+				'relative' => $dir . $orig,
+				'size'     => 'original_image',
+				'filename' => $orig,
+			);
+		}
+
 		if ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
 			foreach ( $metadata['sizes'] as $size_name => $size_data ) {
 				if ( empty( $size_data['file'] ) ) {

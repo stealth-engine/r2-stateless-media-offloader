@@ -153,6 +153,14 @@ class CLI {
 			'errors'    => 0,
 		);
 
+		// Upload mode retries failed items across passes (the cursor advances
+		// past errors, so a single forward walk can leave them un-migrated),
+		// matching the background runner. Verify/dry-run don't upload, so a
+		// retry pass would just re-report the same items — single pass only.
+		$retry_passes = ( ! $verify && ! $dry_run );
+		$pass         = 1;
+		$pass_errors  = 0;
+
 		do {
 			$result = $migrator->migrate_batch( $batch, $cursor );
 
@@ -161,6 +169,7 @@ class CLI {
 			$totals['skipped']   += (int) $result['skipped'];
 			$totals['bytes']     += (int) $result['bytes'];
 			$totals['errors']    += count( $result['errors'] );
+			$pass_errors         += count( $result['errors'] );
 
 			foreach ( $result['errors'] as $err ) {
 				\WP_CLI::warning( $err );
@@ -179,6 +188,14 @@ class CLI {
 
 			$cursor = (string) $result['next_cursor'];
 			$done   = ! empty( $result['done'] );
+
+			if ( $done && $retry_passes && $pass_errors > 0 && $pass < Migration_Runner::MAX_PASSES ) {
+				++$pass;
+				\WP_CLI::log( sprintf( '  pass %d had %d error(s) — re-scanning to retry (pass %d of %d)…', $pass - 1, $pass_errors, $pass, Migration_Runner::MAX_PASSES ) );
+				$pass_errors = 0;
+				$cursor      = '';
+				$done        = false;
+			}
 		} while ( ! $done );
 
 		\WP_CLI::log( '' );
