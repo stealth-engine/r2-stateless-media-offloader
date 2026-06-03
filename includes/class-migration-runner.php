@@ -238,7 +238,7 @@ class Migration_Runner {
 				$migrator = new Migrator( null, $this->settings );
 				$migrator->set_dry_run( 'dry-run' === $state['mode'] )
 					->set_verify( 'verify' === $state['mode'] )
-						->set_heartbeat( array( $this, 'refresh_lock' ) );
+					->set_heartbeat( array( $this, 'refresh_lock' ) );
 
 				$result = $migrator->migrate_batch( self::BATCH, (string) $state['cursor'], self::BATCH_MAX_SECONDS );
 

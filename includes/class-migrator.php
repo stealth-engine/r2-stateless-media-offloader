@@ -332,10 +332,12 @@ class Migrator {
 			return;
 		}
 
-		// Real-upload path: anything already in R2 is adopted, not re-uploaded.
-		// This is what lets the migrator register media copied into R2 by an
-		// external tool (e.g. Cloudflare Super Slurper) without moving bytes.
-		if ( ! $this->dry_run && $this->client->object_exists( $key ) ) {
+		// Anything already in R2 is adopted, not re-uploaded — this is what lets
+		// the migrator register media copied into R2 by an external tool (e.g.
+		// Cloudflare Super Slurper) without moving bytes. Dry-run checks this too
+		// so its preview counts/sizes reflect what an upload would actually skip
+		// rather than overstating the remaining work.
+		if ( $this->client->object_exists( $key ) ) {
 			$result['skipped'] += 1;
 			return;
 		}
