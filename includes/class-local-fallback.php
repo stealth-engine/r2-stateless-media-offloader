@@ -7,8 +7,17 @@
  * editing. Rather than back the whole uploads directory with an r2:// stream
  * wrapper (invasive, high-risk), this hooks the single chokepoint WordPress
  * uses to resolve a file's local path and transparently restores the bytes
- * from R2 on demand. The restored copy is transient working data; the offloader
- * re-uploads (and, in Stateless mode, re-removes) any derivatives produced.
+ * from R2 on demand. The restored copy is transient working data, removed on
+ * shutdown.
+ *
+ * KNOWN LIMITATION (SWR-332): the restore lands in the SYSTEM TEMP dir, so any
+ * operation that then WRITES new derivatives off the restored path — `wp media
+ * regenerate` and the in-admin image editor — writes those files (and an
+ * incorrect metadata['file']) under the temp dir rather than uploads/. The
+ * offloader looks in uploads/, can't find them, and they're lost on shutdown.
+ * Regeneration/editing must be done in CDN mode until SWR-332 (restore to the
+ * canonical uploads path, or a stream wrapper) lands. New uploads and CDN mode
+ * are unaffected.
  *
  * @package R2Offload
  */
