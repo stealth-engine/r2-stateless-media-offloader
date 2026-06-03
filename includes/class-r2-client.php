@@ -253,8 +253,8 @@ class R2_Client {
 	 */
 	public function download_object( $key, $local_path ) {
 		$dir = dirname( $local_path );
-		if ( ! is_dir( $dir ) ) {
-			wp_mkdir_p( $dir );
+		if ( ! is_dir( $dir ) && ! wp_mkdir_p( $dir ) ) {
+			return new \WP_Error( 'r2offload_mkdir_failed', sprintf( /* translators: %s: directory path */ __( 'Could not create the directory %s for the downloaded object.', 'r2-stateless-media-offload' ), $dir ) );
 		}
 
 		// Stream the body straight to disk so a large object (e.g. video in a

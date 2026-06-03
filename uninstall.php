@@ -45,10 +45,10 @@ if ( is_multisite() ) {
 	// plugin is gone either way), which a network admin can mop up via WP-CLI, e.g.
 	//   wp site list --field=url | xargs -I% wp option delete r2offload_settings --url=%
 	$r2offload_max = (int) ini_get( 'max_execution_time' );
-	// Bail at 80% of the limit — always strictly before it, even for small limits
-	// (a fixed margin like max-10 would land past a sub-10s limit and never trip).
-	// 0 = no limit (e.g. WP-CLI), so no deadline.
-	$r2offload_deadline = ( $r2offload_max > 0 ) ? time() + (int) max( 1, floor( $r2offload_max * 0.8 ) ) : 0;
+	// Bail at 80% of the limit — floor(max*0.8) is always strictly below the limit
+	// for max >= 2. 0 = no limit (WP-CLI), and a 1s limit is too small to deadline
+	// meaningfully, so both skip the check (no deadline).
+	$r2offload_deadline = ( $r2offload_max >= 2 ) ? time() + (int) floor( $r2offload_max * 0.8 ) : 0;
 	$r2offload_bailed   = false;
 	foreach ( get_sites( array( 'fields' => 'ids', 'number' => 0 ) ) as $r2offload_site_id ) {
 		if ( $r2offload_deadline && time() >= $r2offload_deadline ) {

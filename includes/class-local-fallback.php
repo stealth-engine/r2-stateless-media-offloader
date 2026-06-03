@@ -10,14 +10,23 @@
  * from R2 on demand. The restored copy is transient working data, removed on
  * shutdown.
  *
- * KNOWN LIMITATION (SWR-332): the restore lands in the SYSTEM TEMP dir, so any
- * operation that then WRITES new derivatives off the restored path — `wp media
- * regenerate` and the in-admin image editor — writes those files (and an
- * incorrect metadata['file']) under the temp dir rather than uploads/. The
- * offloader looks in uploads/, can't find them, and they're lost on shutdown.
- * Regeneration/editing must be done in CDN mode until SWR-332 (restore to the
- * canonical uploads path, or a stream wrapper) lands. New uploads and CDN mode
- * are unaffected.
+ * Restore location (SWR-332): when the attachment's canonical uploads directory
+ * is writable, the file is restored THERE (atomic download-then-rename), so any
+ * derivatives WordPress writes alongside it — `wp media regenerate`, the
+ * in-admin image editor — land in uploads/ where the offloader picks them up and
+ * re-removes them, and metadata['file'] stays correct. When the uploads dir is
+ * read-only (truly ephemeral containers), it falls back to the system temp dir:
+ * reads still work, but derivatives written off that path are not captured, so
+ * regeneration/editing should be done in CDN mode there. The
+ * `r2offload_restore_to_uploads` filter (default true) can force the temp-dir
+ * behaviour. CDN mode and new uploads are unaffected either way.
+ *
+ * Tradeoffs of the canonical restore (accepted): the restored original is a real
+ * file at the canonical uploads path, swept on shutdown — an ABNORMAL request
+ * termination (uncaught fatal that skips shutdown) can leave it behind; the bytes
+ * are correct, so it's a hygiene leak, not data loss. And if offload is frozen
+ * mid-regeneration via `r2offload_offload_on_upload`, the newly generated sizes
+ * stay in uploads/ (the next offload/migrate pass picks them up).
  *
  * @package R2Offload
  */
@@ -35,14 +44,16 @@ class Local_Fallback {
 	private $settings;
 
 	/**
-	 * Temp files restored this request, removed on shutdown.
+	 * Files restored this request (canonical uploads path or system temp),
+	 * removed on shutdown. A canonical restore the offloader already cleaned up is
+	 * skipped here via the file_exists() guard in cleanup().
 	 *
 	 * @var string[]
 	 */
 	private $temp_files = array();
 
 	/**
-	 * Within-request cache of R2 key => restored temp path, so multiple filter
+	 * Within-request cache of R2 key => restored local path, so multiple filter
 	 * calls for the same object (e.g. get_attached_file + an image op) don't
 	 * download it more than once.
 	 *
@@ -101,7 +112,7 @@ class Local_Fallback {
 	 *
 	 * @param string $path          Expected (possibly removed) local path.
 	 * @param int    $attachment_id
-	 * @return string The temp restore path, or $path unchanged when not offloaded.
+	 * @return string The restored path, or $path unchanged when not offloaded.
 	 */
 	private function restore_sibling( $path, $attachment_id ) {
 		if ( '' === (string) $path || file_exists( $path ) ) {
@@ -114,17 +125,15 @@ class Local_Fallback {
 		$dir = dirname( $original );
 		$dir = ( '.' === $dir ) ? '' : trailingslashit( $dir );
 		$key = $dir . wp_basename( $path );
-		$tmp = $this->restore_to_temp( $key, wp_basename( $path ), (int) $attachment_id );
-		return ( '' === $tmp ) ? $path : $tmp;
+		$restored = $this->restore( $key, $path, (int) $attachment_id );
+		return ( '' === $restored ) ? $path : $restored;
 	}
 
 	/**
 	 * Provide a readable local path for an attachment's original, restoring it
-	 * from R2 to a temporary file when it has been removed (Stateless mode).
-	 *
-	 * The container's uploads directory is not assumed writable at runtime, so
-	 * the restore lands in the system temp dir and that path is returned —
-	 * WordPress image functions accept any readable path as a source.
+	 * from R2 when it has been removed (Stateless mode). Restores to the canonical
+	 * uploads location when writable (so derivatives written alongside it are
+	 * captured), else to the system temp dir — see restore().
 	 *
 	 * @param string $file          Expected local path.
 	 * @param int    $attachment_id
@@ -138,8 +147,8 @@ class Local_Fallback {
 		if ( false === $key ) {
 			return $file;
 		}
-		$tmp = $this->restore_to_temp( $key, wp_basename( $file ), (int) $attachment_id );
-		return ( '' === $tmp ) ? $file : $tmp;
+		$restored = $this->restore( $key, $file, (int) $attachment_id );
+		return ( '' === $restored ) ? $file : $restored;
 	}
 
 	/**
@@ -157,36 +166,94 @@ class Local_Fallback {
 	}
 
 	/**
-	 * Download an R2 object to a temporary file and return its path.
+	 * Download an R2 object to a readable local path and return it.
 	 *
-	 * @param string $key
-	 * @param string $basename Preserve the extension so image functions work.
+	 * Restores to the CANONICAL uploads path when that directory is writable, so
+	 * derivatives WordPress writes alongside it (regeneration / image editing) are
+	 * picked up by the offloader and metadata['file'] stays correct (SWR-332);
+	 * else to the system temp dir. The canonical write is atomic: download into a
+	 * unique temp file in the target directory, then rename into place so a
+	 * concurrent reader never sees a half-written canonical file.
+	 *
+	 * @param string $key           R2 object key.
+	 * @param string $local_path    The canonical local path WordPress expects.
 	 * @param int    $attachment_id For error context.
-	 * @return string Temp path on success, '' on failure.
+	 * @return string Restored path on success, '' on failure.
 	 */
-	private function restore_to_temp( $key, $basename, $attachment_id ) {
-		// Reuse a temp file already restored for this key this request (and only
-		// if it still exists — shutdown cleanup may not have run, but a stray
-		// unlink could have).
+	private function restore( $key, $local_path, $attachment_id ) {
+		// Reuse a file already restored for this key this request (and only if it
+		// still exists — shutdown cleanup may not have run, but a stray unlink or
+		// the offloader's own cleanup could have removed it).
 		if ( isset( $this->restored[ $key ] ) && file_exists( $this->restored[ $key ] ) ) {
 			return $this->restored[ $key ];
 		}
-		$tmp = wp_tempnam( $basename );
-		if ( ! $tmp ) {
+
+		$target = $this->restore_target( $local_path );
+		if ( '' === $target['download_to'] ) {
 			// Temp-dir exhaustion / non-writable temp affects every stateless
 			// restore, so surface it rather than failing silently.
 			error_log( sprintf( 'r2offload: could not create a temp file to restore %s (attachment %d)', $key, $attachment_id ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 			return '';
 		}
-		$restored = $this->client->download_object( $key, $tmp );
+
+		$restored = $this->client->download_object( $key, $target['download_to'] );
 		if ( is_wp_error( $restored ) ) {
-			wp_delete_file( $tmp );
+			if ( file_exists( $target['download_to'] ) ) {
+				wp_delete_file( $target['download_to'] );
+			}
 			error_log( sprintf( 'r2offload: restore failed for %s (attachment %d): %s', $key, $attachment_id, $restored->get_error_message() ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 			return '';
 		}
-		$this->temp_files[]    = $tmp;
-		$this->restored[ $key ] = $tmp;
-		return $tmp;
+
+		$path = $target['download_to'];
+		if ( $target['publish_to'] !== $target['download_to'] ) {
+			// Atomically publish into the canonical uploads location. On the
+			// (near-impossible, same-directory) rename failure, fail clean rather
+			// than hand WordPress a temp-basename source: that would derive wrong
+			// derivative names and a wrong metadata['file']. The caller then falls
+			// back to the original missing path, so the op fails visibly instead of
+			// silently corrupting.
+			if ( @rename( $target['download_to'], $target['publish_to'] ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- best-effort publish; failure is handled below.
+				$path = $target['publish_to'];
+			} else {
+				if ( file_exists( $target['download_to'] ) ) {
+					wp_delete_file( $target['download_to'] );
+				}
+				error_log( sprintf( 'r2offload: could not publish restored %s into %s', $key, $target['publish_to'] ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				return '';
+			}
+		}
+
+		$this->temp_files[]     = $path;
+		$this->restored[ $key ] = $path;
+		return $path;
+	}
+
+	/**
+	 * Decide where to restore a file: the canonical uploads location when that
+	 * directory is writable (preferred — derivatives land where the offloader
+	 * looks), else the system temp dir. Returns the path to DOWNLOAD to and the
+	 * final path to PUBLISH to (equal for the temp-dir case = no rename).
+	 *
+	 * @param string $local_path Canonical local path WordPress expects.
+	 * @return array{download_to:string,publish_to:string}
+	 */
+	private function restore_target( $local_path ) {
+		$basename = wp_basename( $local_path );
+		$dir      = dirname( $local_path );
+
+		$use_uploads = apply_filters( 'r2offload_restore_to_uploads', true, $local_path );
+		if ( $use_uploads && '' !== $dir && '.' !== $dir && wp_mkdir_p( $dir ) && wp_is_writable( $dir ) ) {
+			$tmp = wp_tempnam( $basename, $dir ); // Unique temp file IN the canonical directory.
+			if ( $tmp ) {
+				return array( 'download_to' => $tmp, 'publish_to' => $local_path );
+			}
+		}
+
+		// Read-only / ephemeral uploads dir (or filtered off): system temp dir.
+		// Reads work; derivatives written off this path are not captured (SWR-332).
+		$tmp = (string) wp_tempnam( $basename );
+		return array( 'download_to' => $tmp, 'publish_to' => $tmp );
 	}
 
 	/**
