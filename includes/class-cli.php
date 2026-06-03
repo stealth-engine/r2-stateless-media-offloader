@@ -135,8 +135,8 @@ class CLI {
 			\WP_CLI::error( 'R2 not configured. Set R2OFFLOAD_* constants in wp-config.php or via settings.' );
 		}
 
-		$batch   = isset( $assoc_args['batch'] ) ? max( 1, (int) $assoc_args['batch'] ) : 100;
-		$timeout = isset( $assoc_args['timeout'] ) ? max( 1, (int) $assoc_args['timeout'] ) : 300;
+		$batch   = $this->positive_int_arg( $assoc_args, 'batch', 100 );
+		$timeout = $this->positive_int_arg( $assoc_args, 'timeout', 300 );
 
 		$migrator = new Migrator();
 		$migrator->set_dry_run( $dry_run )
@@ -147,22 +147,73 @@ class CLI {
 		\WP_CLI::log( sprintf( 'Mode: %s   Batch size: %d   Download timeout: %ds', $mode, $batch, $timeout ) );
 		\WP_CLI::log( '' );
 
-		$cursor = '';
-		$totals = array(
+		// Upload mode retries failed items across passes (the cursor advances
+		// past errors, so a single forward walk can leave them un-migrated),
+		// matching the background runner. Verify/dry-run don't upload, so a
+		// retry pass would just re-report the same items — single pass only.
+		$totals = $this->run_passes( $migrator, $batch, ( ! $verify && ! $dry_run ) );
+
+		$this->print_summary( $mode, $verify, $totals );
+
+		// Exit code matters for automation: a dry-run is always a success (its
+		// "errors" are just unmeasurable previews), but a real sync or a verify
+		// that finished with errors/missing keys must exit non-zero so callers
+		// can detect it — WP_CLI::warning/success both exit 0.
+		if ( $dry_run ) {
+			\WP_CLI::success( 'Dry-run complete — nothing uploaded.' );
+			return;
+		}
+		if ( $totals['errors'] > 0 ) {
+			\WP_CLI::error(
+				$verify
+					? sprintf( 'Verify finished with %d missing key(s).', $totals['errors'] )
+					: sprintf( 'Sync finished with %d error(s) — see warnings above.', $totals['errors'] )
+			);
+		}
+		\WP_CLI::success( $verify ? 'Verify finished — all expected keys present in R2.' : 'Sync complete.' );
+	}
+
+	/**
+	 * Validate a positive-integer assoc arg, erroring on garbage rather than
+	 * silently coercing (e.g. --batch=foo would otherwise become 1).
+	 *
+	 * @param array  $assoc_args
+	 * @param string $key
+	 * @param int    $default
+	 * @return int
+	 */
+	private function positive_int_arg( $assoc_args, $key, $default ) {
+		if ( ! isset( $assoc_args[ $key ] ) ) {
+			return $default;
+		}
+		$value = (string) $assoc_args[ $key ];
+		if ( ! ctype_digit( $value ) || (int) $value < 1 ) {
+			\WP_CLI::error( sprintf( '--%s must be a positive integer.', $key ) );
+		}
+		return (int) $value;
+	}
+
+	/**
+	 * Run batches until done, retrying failed items across passes in upload mode
+	 * (bounded by MAX_PASSES). Returns the final-pass totals (uploaded/bytes are
+	 * cumulative across the whole run).
+	 *
+	 * @param Migrator $migrator
+	 * @param int      $batch
+	 * @param bool     $retry_passes
+	 * @return array{processed:int,uploaded:int,skipped:int,bytes:int,errors:int}
+	 */
+	private function run_passes( $migrator, $batch, $retry_passes ) {
+		$cursor      = '';
+		$totals      = array(
 			'processed' => 0,
 			'uploaded'  => 0,
 			'skipped'   => 0,
 			'bytes'     => 0,
 			'errors'    => 0,
 		);
-
-		// Upload mode retries failed items across passes (the cursor advances
-		// past errors, so a single forward walk can leave them un-migrated),
-		// matching the background runner. Verify/dry-run don't upload, so a
-		// retry pass would just re-report the same items — single pass only.
-		$retry_passes = ( ! $verify && ! $dry_run );
-		$pass         = 1;
-		$pass_errors  = 0;
+		$pass        = 1;
+		$pass_errors = 0;
 
 		do {
 			$result = $migrator->migrate_batch( $batch, $cursor );
@@ -216,6 +267,17 @@ class CLI {
 			) );
 		}
 
+		return $totals;
+	}
+
+	/**
+	 * Print the run summary.
+	 *
+	 * @param string $mode
+	 * @param bool   $verify
+	 * @param array  $totals
+	 */
+	private function print_summary( $mode, $verify, $totals ) {
 		\WP_CLI::log( '' );
 		\WP_CLI::log( '--- Summary ---' );
 		\WP_CLI::log( 'Mode:       ' . $mode );
@@ -229,20 +291,6 @@ class CLI {
 			\WP_CLI::log( 'Skipped:    ' . $totals['skipped'] . ' item(s)' );
 			\WP_CLI::log( 'Total size: ' . size_format( $totals['bytes'], 2 ) );
 			\WP_CLI::log( 'Errors:     ' . $totals['errors'] );
-		}
-
-		if ( ! $verify && $totals['errors'] > 0 ) {
-			\WP_CLI::warning( sprintf( '%d error(s) — see warnings above.', $totals['errors'] ) );
-		}
-
-		if ( $dry_run ) {
-			\WP_CLI::success( 'Dry-run complete — nothing uploaded.' );
-		} elseif ( $verify ) {
-			$totals['errors'] > 0
-				? \WP_CLI::warning( 'Verify finished with missing keys.' )
-				: \WP_CLI::success( 'Verify finished — all expected keys present in R2.' );
-		} else {
-			\WP_CLI::success( 'Sync complete.' );
 		}
 	}
 }
