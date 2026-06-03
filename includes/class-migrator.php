@@ -255,8 +255,12 @@ class Migrator {
 		// queries so the per-item get_post_meta()/wp_get_attachment_metadata()
 		// reads below hit the object cache instead of issuing one SELECT each —
 		// turning ~batch_size round-trips into a constant two for the large-library
-		// CLI/cron path.
-		_prime_post_caches( array_map( 'intval', $ids ), false, true );
+		// CLI/cron path. Guarded: _prime_post_caches() exists since WP 3.4 but was
+		// only made public API in 6.1, and it's a pure optimisation — the per-item
+		// reads work without it, so degrade gracefully rather than depend on it.
+		if ( function_exists( '_prime_post_caches' ) ) {
+			_prime_post_caches( array_map( 'intval', $ids ), false, true );
+		}
 
 		foreach ( $ids as $raw_id ) {
 			$id  = (int) $raw_id;
