@@ -145,8 +145,23 @@ JS;
 		if ( ! in_array( $mode, array( 'upload', 'dry-run', 'verify' ), true ) ) {
 			$mode = 'upload';
 		}
-		if ( ! $this->settings->is_configured() ) {
+		// Don't reset an already-running migration. The Start button is disabled
+		// in the UI while running, but a stale page or a direct AJAX call could
+		// still hit this; calling start() would reset the cursor, counters and
+		// run_id out from under a cron/poll worker that may still hold the lock —
+		// duplicate work and a progress UI that no longer matches the background
+		// run. Treat it as a no-op that returns the live state. (A crashed run
+		// keeps running=true but self-resumes via its already-scheduled tick.)
+		$current = $this->runner->state();
+		if ( ! empty( $current['running'] ) ) {
+			$this->respond( $current );
+		}
+		// Upload and verify need R2 credentials; dry-run only counts (degrading to
+		// "everything as to-upload" when R2 isn't reachable), so allow it to
+		// preview before credentials exist — matching `wp r2offload sync --dry-run`.
+		if ( 'dry-run' !== $mode && ! $this->settings->is_configured() ) {
 			wp_send_json_error( array( 'message' => __( 'Configure R2 credentials first.', 'r2-stateless-media-offload' ) ) );
+			return; // wp_send_json_error already exits; explicit for static analysis.
 		}
 		$this->respond( $this->runner->start( $mode ) );
 	}

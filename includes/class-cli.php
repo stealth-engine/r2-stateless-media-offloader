@@ -135,6 +135,16 @@ class CLI {
 			\WP_CLI::error( 'R2 not configured. Set R2OFFLOAD_* constants in wp-config.php or via settings.' );
 		}
 
+		// Upload mode writes (uploads + _r2offload_* meta). The CLI drives the
+		// Migrator directly and does NOT share the background runner's lock, so
+		// running it while an admin/cron migration is active would put two
+		// unsynchronised writers on the same library. Refuse rather than
+		// double-process. Dry-run/verify are read-only (HEADs only), so they may
+		// run alongside a background migration.
+		if ( ! $dry_run && ! $verify && ! empty( ( new Migration_Runner( $settings ) )->state()['running'] ) ) {
+			\WP_CLI::error( 'A background migration is currently running (Media → Migrate to R2). Stop it first, or wait for it to finish, before running an upload sync.' );
+		}
+
 		$batch   = $this->positive_int_arg( $assoc_args, 'batch', 100 );
 		$timeout = $this->positive_int_arg( $assoc_args, 'timeout', 300 );
 
@@ -171,6 +181,31 @@ class CLI {
 			);
 		}
 		\WP_CLI::success( $verify ? 'Verify finished — all expected keys present in R2.' : 'Sync complete.' );
+	}
+
+	/**
+	 * Reset the in-memory object cache and query log between batches (the classic
+	 * long-running-WP-CLI "stop the insanity"). This clears only the in-process
+	 * runtime caches — it does NOT call wp_cache_flush(), which on a shared
+	 * persistent backend (Redis/Memcached) would wipe the whole site's cache
+	 * mid-migration. __remoteset() re-seeds the runtime layer for such backends.
+	 */
+	private function flush_object_cache() {
+		global $wpdb, $wp_object_cache;
+
+		$wpdb->queries = array();
+
+		if ( ! is_object( $wp_object_cache ) ) {
+			return;
+		}
+		foreach ( array( 'group_ops', 'stats', 'memcache_debug', 'cache' ) as $prop ) {
+			if ( property_exists( $wp_object_cache, $prop ) ) {
+				$wp_object_cache->$prop = array();
+			}
+		}
+		if ( is_callable( array( $wp_object_cache, '__remoteset' ) ) ) {
+			$wp_object_cache->__remoteset();
+		}
 	}
 
 	/**
@@ -257,6 +292,12 @@ class CLI {
 				$totals['skipped']   = 0;
 				$totals['errors']    = 0;
 			}
+
+			// Each batch primes the post + post-meta caches (Migrator::migrate_batch);
+			// with the default in-process object cache nothing evicts them, so a long
+			// run over a large library would grow memory without bound. Reset the
+			// runtime caches between batches to keep it flat.
+			$this->flush_object_cache();
 		} while ( ! $done );
 
 		if ( $retry_passes && $pass >= Migration_Runner::MAX_PASSES && $pass_errors > 0 ) {
