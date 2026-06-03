@@ -242,18 +242,48 @@ class Local_Fallback {
 		$basename = wp_basename( $local_path );
 		$dir      = dirname( $local_path );
 
+		// Only ever mkdir/rename/cleanup at the canonical location when it is
+		// genuinely INSIDE the uploads basedir. $local_path comes from the
+		// filterable get_attached_file / load_image_to_edit_path value, so a
+		// hostile or odd attachment path (or an upstream filter) could otherwise
+		// point us to write/delete under wp-content/plugins, themes, or elsewhere.
+		// Anything outside uploads falls back to the system temp dir.
 		$use_uploads = apply_filters( 'r2offload_restore_to_uploads', true, $local_path );
-		if ( $use_uploads && '' !== $dir && '.' !== $dir && wp_mkdir_p( $dir ) && wp_is_writable( $dir ) ) {
+		if ( $use_uploads && $this->within_uploads_basedir( $local_path ) && '.' !== $dir && wp_mkdir_p( $dir ) && wp_is_writable( $dir ) ) {
 			$tmp = wp_tempnam( $basename, $dir ); // Unique temp file IN the canonical directory.
 			if ( $tmp ) {
 				return array( 'download_to' => $tmp, 'publish_to' => $local_path );
 			}
 		}
 
-		// Read-only / ephemeral uploads dir (or filtered off): system temp dir.
-		// Reads work; derivatives written off this path are not captured (SWR-332).
+		// Read-only / ephemeral uploads dir, outside uploads, or filtered off:
+		// system temp dir. Reads work; derivatives written off this path are not
+		// captured (SWR-332).
 		$tmp = (string) wp_tempnam( $basename );
 		return array( 'download_to' => $tmp, 'publish_to' => $tmp );
+	}
+
+	/**
+	 * Whether a path is genuinely inside the uploads basedir, with no parent
+	 * traversal. Guards the canonical restore so a filtered/hostile attachment
+	 * path can't make the plugin write or delete outside uploads (e.g. under
+	 * plugins/themes — which WP.org guidelines forbid writing to anyway).
+	 *
+	 * @param string $path
+	 * @return bool
+	 */
+	private function within_uploads_basedir( $path ) {
+		$uploads = wp_get_upload_dir();
+		if ( ! empty( $uploads['error'] ) || empty( $uploads['basedir'] ) ) {
+			return false;
+		}
+		$path = wp_normalize_path( (string) $path );
+		// Reject any parent-traversal segment: a plain string prefix check would
+		// let "<basedir>/../../x" pass while the OS resolves it outside uploads.
+		if ( false !== strpos( $path . '/', '/../' ) ) {
+			return false;
+		}
+		return 0 === strpos( $path, wp_normalize_path( trailingslashit( $uploads['basedir'] ) ) );
 	}
 
 	/**
