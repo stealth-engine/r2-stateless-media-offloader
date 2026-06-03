@@ -58,7 +58,7 @@ class Offloader {
 		$original_relative = isset( $metadata['file'] )
 			? $metadata['file']
 			: (string) get_post_meta( $attachment_id, '_wp_attached_file', true );
-		$original_key = $this->settings->object_key( $original_relative );
+		$original_key = $this->base_object_key( $attachment_id, $original_relative );
 
 		$already_synced = (bool) get_post_meta( $attachment_id, Settings::META_SYNCED, true );
 		$is_stateless   = 'stateless' === $this->settings->get( 'mode' );
@@ -224,14 +224,38 @@ class Offloader {
 		$uploads = wp_get_upload_dir();
 		$basedir = trailingslashit( $uploads['basedir'] );
 
-		// Shared enumeration (original + every registered size). Local path is
-		// the uploads-relative path; the R2 key routes through object_key() to
-		// apply the configured path_prefix.
+		// Anchor keys on the attachment's base key: its stored _r2offload_key
+		// when already synced, else the current path_prefix. This keeps a
+		// re-offload (e.g. new size on regeneration) uploading into the SAME
+		// directory the URL rewriter serves from, even if path_prefix changed
+		// since the first sync — otherwise the new size would 404. The original
+		// keeps its exact key; sizes/original_image are siblings in its dir.
+		$base_key = $this->base_object_key( $attachment_id, $relative );
+		$dir      = dirname( $base_key );
+		$dir      = ( '' === $dir || '.' === $dir ) ? '' : trailingslashit( $dir );
+
 		$files = array();
 		foreach ( Settings::enumerate_files( $metadata, $relative ) as $file ) {
-			$files[ $basedir . $file['relative'] ] = $this->settings->object_key( $file['relative'] );
+			$key = ( '' === $file['size'] ) ? $base_key : $dir . $file['filename'];
+			$files[ $basedir . $file['relative'] ] = $key;
 		}
 
 		return $files;
+	}
+
+	/**
+	 * The attachment's canonical R2 key for the original: its stored
+	 * `_r2offload_key` when already synced (so it survives a later path_prefix
+	 * change), else derived from the current path_prefix. Shared by offload()
+	 * and collect_files() so the marked key, the uploaded keys and the URL
+	 * rewriter all agree.
+	 *
+	 * @param int    $attachment_id
+	 * @param string $relative
+	 * @return string
+	 */
+	private function base_object_key( $attachment_id, $relative ) {
+		$stored = (string) get_post_meta( $attachment_id, Settings::META_KEY, true );
+		return ( '' !== $stored ) ? $stored : $this->settings->object_key( (string) $relative );
 	}
 }

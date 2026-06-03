@@ -349,12 +349,18 @@ class Migrator {
 		// can run verify mode for a full check).
 		$head = $this->client->head_object( $key );
 		if ( null !== $head ) {
-			$size_ok = ! ( $has_local && null !== $head['size'] && (int) filesize( $local ) !== (int) $head['size'] );
+			// With a local copy we must be able to confirm the R2 object is the
+			// same size — if the HEAD omitted Content-Length we can't, so don't
+			// adopt (re-upload instead). Without a local copy we trust existence.
+			$size_ok = $has_local
+				? ( null !== $head['size'] && (int) filesize( $local ) === (int) $head['size'] )
+				: true;
 			if ( $size_ok ) {
 				$result['skipped'] += 1;
 				return;
 			}
-			// else: size disagrees with the local source — fall through and re-upload.
+			// else: size unverifiable/mismatched against the local source — fall
+			// through and re-upload.
 		}
 
 		if ( $this->dry_run ) {
@@ -530,10 +536,18 @@ class Migrator {
 			$url = ( false === $pos ) ? $base : substr( $base, 0, $pos + 1 ) . $item['filename'];
 		}
 
-		// SSRF guard: only fetch from a public host. wp_http_validate_url()
-		// rejects loopback / private / reserved-IP targets, so a crafted
-		// attachment URL (or a compromised upstream URL filter) can't make the
-		// server fetch an internal endpoint. Treat a rejected URL as "no source".
+		// SSRF guard for REMOTE sources: wp_http_validate_url() rejects
+		// loopback / private / reserved-IP targets, so a crafted attachment URL
+		// (or a compromised upstream URL filter) can't make the server fetch an
+		// internal endpoint. But the site's OWN media URL is same-origin and
+		// legitimately resolves to a private IP on staging / Docker / k8s — so
+		// pass same-origin URLs through (fetching the site itself isn't SSRF),
+		// and only validate cross-origin URLs.
+		$url_host  = wp_parse_url( $url, PHP_URL_HOST );
+		$home_host = wp_parse_url( home_url(), PHP_URL_HOST );
+		if ( $url_host && $home_host && strtolower( (string) $url_host ) === strtolower( (string) $home_host ) ) {
+			return $url;
+		}
 		return wp_http_validate_url( $url ) ? $url : '';
 	}
 

@@ -258,8 +258,12 @@ class R2_Client {
 		}
 
 		// Stream the body straight to disk so a large object (e.g. video in a
-		// Stateless restore) never has to fit in PHP memory.
-		$response = $this->request( 'GET', '/' . ltrim( $key, '/' ), array(), '', array(), $local_path );
+		// Stateless restore) never has to fit in PHP memory. Request identity
+		// encoding so the bytes on disk match Content-Length: if an intermediary
+		// gzipped the response the transport would transparently decompress AND
+		// strip Content-Encoding, and the size guard below would then delete a
+		// perfectly good file as "incomplete".
+		$response = $this->request( 'GET', '/' . ltrim( $key, '/' ), array(), '', array( 'Accept-Encoding' => 'identity' ), $local_path );
 		if ( is_wp_error( $response ) ) {
 			// A transport error mid-stream can leave a partial file behind;
 			// WordPress doesn't clean it up, so we do.
@@ -290,7 +294,8 @@ class R2_Client {
 		$encoding      = (string) wp_remote_retrieve_header( $response, 'content-encoding' );
 		$len           = wp_remote_retrieve_header( $response, 'content-length' );
 		$expected_size = ( '' !== (string) $len ) ? (int) $len : $this->remote_object_size( $key );
-		if ( '' === $encoding && null !== $expected_size && $expected_size !== (int) filesize( $local_path ) ) {
+		$actual_size   = filesize( $local_path );
+		if ( '' === $encoding && null !== $expected_size && false !== $actual_size && $expected_size !== (int) $actual_size ) {
 			wp_delete_file( $local_path );
 			return new \WP_Error( 'r2offload_download_incomplete', __( 'Downloaded object was incomplete.', 'r2-stateless-media-offload' ) );
 		}
