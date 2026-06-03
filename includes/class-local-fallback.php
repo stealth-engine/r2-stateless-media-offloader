@@ -206,4 +206,15 @@ class Local_Fallback {
 		}
 		return $this->key_cache[ $attachment_id ];
 	}
+
+	/**
+	 * Drop the per-request key/restore caches. Hooked on `switch_blog` (see
+	 * Plugin): the key cache is keyed by attachment ID (not network-unique), so
+	 * it must not carry across a blog switch. Restored temp files stay tracked
+	 * in $temp_files for shutdown cleanup.
+	 */
+	public function flush_request_cache() {
+		$this->key_cache = array();
+		$this->restored  = array();
+	}
 }

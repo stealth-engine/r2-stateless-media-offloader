@@ -77,7 +77,31 @@ class Migration_Runner {
 	 * resume mid-batch on reactivation. Static so it can be a deactivation hook.
 	 */
 	public static function on_deactivate() {
+		// On multisite the deactivation hook fires once (in one site's context),
+		// but the cron tick and migration state are per-site — so clean every
+		// site, or sites other than the one deactivation ran in keep an orphaned
+		// (now inert) tick and a stale running=true state.
+		if ( is_multisite() ) {
+			foreach ( get_sites( array( 'fields' => 'ids', 'number' => 0 ) ) as $site_id ) {
+				switch_to_blog( (int) $site_id );
+				self::cleanup_site();
+				restore_current_blog();
+			}
+			return;
+		}
+		self::cleanup_site();
+	}
+
+	/**
+	 * Per-site deactivation cleanup: drop the scheduled tick, release the batch
+	 * lock, and stop a run.
+	 */
+	private static function cleanup_site() {
 		wp_clear_scheduled_hook( self::CRON_HOOK );
+		// Drop the batch lock too — otherwise a worker that was mid-batch at
+		// deactivation leaves it set until its TTL, blocking the first batch
+		// after reactivation.
+		delete_option( self::LOCK_OPTION );
 		$state = get_option( self::STATE_OPTION, array() );
 		if ( is_array( $state ) && ! empty( $state['running'] ) ) {
 			$state['running'] = false;

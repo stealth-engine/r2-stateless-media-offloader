@@ -302,6 +302,16 @@ class Settings {
 	}
 
 	/**
+	 * Drop the memoised option so the next read re-loads it. Hooked on
+	 * `switch_blog` (see Plugin) — settings (bucket, custom_domain, path_prefix,
+	 * mode, credentials) are per-site, so a request that switches blogs must not
+	 * keep resolving against the first site's settings.
+	 */
+	public function flush_request_cache() {
+		$this->stored = null;
+	}
+
+	/**
 	 * Lazy-load the stored option.
 	 *
 	 * @return array

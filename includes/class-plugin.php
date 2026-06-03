@@ -52,10 +52,20 @@ final class Plugin {
 		( new Offloader( $this->client, $this->settings ) )->register();
 
 		// Serve offloaded media from R2 / the custom domain (render-time).
-		( new URL_Rewriter( $this->client, $this->settings ) )->register();
+		$rewriter = new URL_Rewriter( $this->client, $this->settings );
+		$rewriter->register();
 
 		// Stateless read path: restore files from R2 on demand for image ops.
-		( new Local_Fallback( $this->client, $this->settings ) )->register();
+		$fallback = new Local_Fallback( $this->client, $this->settings );
+		$fallback->register();
+
+		// Multisite: these objects live for the whole request and memoise
+		// per-site state (settings, and attachment-ID-keyed key caches). A
+		// request that switch_to_blog()s must not keep resolving against the
+		// previous site, so drop those caches whenever the active blog changes.
+		add_action( 'switch_blog', array( $this->settings, 'flush_request_cache' ) );
+		add_action( 'switch_blog', array( $rewriter, 'flush_request_cache' ) );
+		add_action( 'switch_blog', array( $fallback, 'flush_request_cache' ) );
 
 		// Background migration runner (cron-driven) + admin UI.
 		$runner = new Migration_Runner( $this->settings );

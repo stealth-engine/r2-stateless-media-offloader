@@ -233,4 +233,13 @@ class URL_Rewriter {
 		}
 		return $this->key_cache[ $attachment_id ];
 	}
+
+	/**
+	 * Drop the per-request key cache. Hooked on `switch_blog` (see Plugin): the
+	 * cache is keyed by attachment ID, which is NOT unique across a multisite
+	 * network, so it must not survive a switch to another blog.
+	 */
+	public function flush_request_cache() {
+		$this->key_cache = array();
+	}
 }
