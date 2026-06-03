@@ -184,6 +184,7 @@ class Migrator {
 		$cursor_id  = '' === $cursor ? 0 : (int) $cursor;
 		$max_seconds = max( 0, (int) $max_seconds );
 		$started     = microtime( true );
+		$timeboxed   = false;
 
 		global $wpdb;
 		$ids = $wpdb->get_col(
