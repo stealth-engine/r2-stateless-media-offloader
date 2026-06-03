@@ -224,19 +224,26 @@ class Offloader {
 	 * Returns nothing for an attachment this plugin never offloaded: deleting
 	 * such an attachment must not issue R2 DELETEs for computed keys, which
 	 * could remove objects the plugin hasn't claimed — e.g. media bulk-copied
-	 * into R2 (Super Slurper) but not yet adopted via `wp r2offload sync`. This
-	 * mirrors the `_r2offload_synced` guard in Settings::resolve_object_key().
+	 * into R2 (Super Slurper) but not yet adopted via `wp r2offload sync`.
+	 *
+	 * The "never claimed" test is `! META_SYNCED && '' === META_KEY` — NOT
+	 * META_SYNCED alone: a re-offload that partially fails clears META_SYNCED
+	 * (CDN fallback) but leaves META_KEY and the already-uploaded objects in R2.
+	 * Gating delete on META_SYNCED alone would then orphan those objects.
 	 *
 	 * @param int $attachment_id
 	 * @return string[]
 	 */
 	private function r2_keys_for( $attachment_id ) {
-		if ( ! get_post_meta( $attachment_id, Settings::META_SYNCED, true ) ) {
+		$relative = (string) get_post_meta( $attachment_id, '_wp_attached_file', true );
+		$original = (string) get_post_meta( $attachment_id, Settings::META_KEY, true );
+
+		// Never claimed by this plugin (no synced flag AND no stored key) — leave
+		// any externally-present objects untouched.
+		if ( ! get_post_meta( $attachment_id, Settings::META_SYNCED, true ) && '' === $original ) {
 			return array();
 		}
 
-		$relative = (string) get_post_meta( $attachment_id, '_wp_attached_file', true );
-		$original = (string) get_post_meta( $attachment_id, Settings::META_KEY, true );
 		if ( '' === $original ) {
 			if ( '' === $relative ) {
 				return array();
