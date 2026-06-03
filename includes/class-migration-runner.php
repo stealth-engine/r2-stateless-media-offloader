@@ -76,12 +76,16 @@ class Migration_Runner {
 	 * gone once deactivated) and mark a running migration stopped so it doesn't
 	 * resume mid-batch on reactivation. Static so it can be a deactivation hook.
 	 */
-	public static function on_deactivate() {
-		// On multisite the deactivation hook fires once (in one site's context),
-		// but the cron tick and migration state are per-site — so clean every
-		// site, or sites other than the one deactivation ran in keep an orphaned
-		// (now inert) tick and a stale running=true state.
-		if ( is_multisite() ) {
+	public static function on_deactivate( $network_deactivating = false ) {
+		// A NETWORK deactivation removes the plugin from every site at once, and
+		// cron/state are per-site, so clean every site (otherwise sibling sites
+		// keep an orphaned, now-inert tick and a stale running=true state). But a
+		// PER-SITE deactivation (or a single-site install) must touch ONLY the
+		// current site — looping all sites there would wipe cron and migration
+		// state for sibling subsites that still have the plugin active.
+		// register_deactivation_hook passes $network_deactivating to tell them
+		// apart.
+		if ( is_multisite() && $network_deactivating ) {
 			foreach ( get_sites( array( 'fields' => 'ids', 'number' => 0 ) ) as $site_id ) {
 				switch_to_blog( (int) $site_id );
 				self::cleanup_site();
