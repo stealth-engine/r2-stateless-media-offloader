@@ -140,17 +140,33 @@ class R2_Client {
 	}
 
 	/**
+	 * HEAD an object. Returns null when it doesn't exist (or the request
+	 * failed), else metadata about it.
+	 *
+	 * @param string $key
+	 * @return array{size:int|null}|null  size is null when the response had no
+	 *                                    Content-Length.
+	 */
+	public function head_object( $key ) {
+		$response = $this->request( 'HEAD', '/' . ltrim( $key, '/' ) );
+		if ( is_wp_error( $response ) ) {
+			return null;
+		}
+		if ( 200 !== (int) wp_remote_retrieve_response_code( $response ) ) {
+			return null;
+		}
+		$len = wp_remote_retrieve_header( $response, 'content-length' );
+		return array( 'size' => ( '' === (string) $len ) ? null : (int) $len );
+	}
+
+	/**
 	 * Whether an object exists (HEAD).
 	 *
 	 * @param string $key
 	 * @return bool
 	 */
 	public function object_exists( $key ) {
-		$response = $this->request( 'HEAD', '/' . ltrim( $key, '/' ) );
-		if ( is_wp_error( $response ) ) {
-			return false;
-		}
-		return 200 === (int) wp_remote_retrieve_response_code( $response );
+		return null !== $this->head_object( $key );
 	}
 
 	/**
@@ -267,10 +283,14 @@ class R2_Client {
 
 		// Guard against a truncated download: compare against Content-Length.
 		// If the GET response omitted it (chunked/streamed), fall back to a HEAD
-		// so a short stream can't pass as a complete restore.
+		// so a short stream can't pass as a complete restore. Skip the check
+		// entirely if the body was content-encoded (e.g. an intermediary gzipped
+		// it): the on-disk byte count then legitimately differs from the
+		// declared length, and comparing would delete a valid file.
+		$encoding      = (string) wp_remote_retrieve_header( $response, 'content-encoding' );
 		$len           = wp_remote_retrieve_header( $response, 'content-length' );
 		$expected_size = ( '' !== (string) $len ) ? (int) $len : $this->remote_object_size( $key );
-		if ( null !== $expected_size && $expected_size !== (int) filesize( $local_path ) ) {
+		if ( '' === $encoding && null !== $expected_size && $expected_size !== (int) filesize( $local_path ) ) {
 			wp_delete_file( $local_path );
 			return new \WP_Error( 'r2offload_download_incomplete', __( 'Downloaded object was incomplete.', 'r2-stateless-media-offload' ) );
 		}
@@ -284,15 +304,8 @@ class R2_Client {
 	 * @return int|null
 	 */
 	private function remote_object_size( $key ) {
-		$response = $this->request( 'HEAD', '/' . ltrim( $key, '/' ) );
-		if ( is_wp_error( $response ) ) {
-			return null;
-		}
-		if ( 200 !== (int) wp_remote_retrieve_response_code( $response ) ) {
-			return null;
-		}
-		$len = wp_remote_retrieve_header( $response, 'content-length' );
-		return ( '' === (string) $len ) ? null : (int) $len;
+		$head = $this->head_object( $key );
+		return ( null === $head ) ? null : $head['size'];
 	}
 
 	/**

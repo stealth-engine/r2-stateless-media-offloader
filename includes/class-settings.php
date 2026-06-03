@@ -278,6 +278,25 @@ class Settings {
 	}
 
 	/**
+	 * True when a secret is stored in the DB but no longer decrypts (e.g. the
+	 * site's auth salt was rotated). The plugin then behaves as unconfigured;
+	 * this lets the admin UI say *why* instead of silently failing.
+	 *
+	 * @return bool
+	 */
+	public function secret_decrypt_failed() {
+		if ( $this->is_constant( 'secret_key' ) ) {
+			return false; // Constant is plaintext — never "undecryptable".
+		}
+		$stored = $this->stored();
+		$raw    = isset( $stored['secret_key'] ) ? (string) $stored['secret_key'] : '';
+		if ( '' === $raw ) {
+			return false; // Nothing stored.
+		}
+		return '' === (string) $this->get( 'secret_key' ); // Stored, but decrypts to empty.
+	}
+
+	/**
 	 * Lazy-load the stored option.
 	 *
 	 * @return array

@@ -146,7 +146,13 @@ class Offloader {
 			return;
 		}
 		foreach ( $this->r2_keys_for( $attachment_id ) as $key ) {
-			$this->client->delete_object( $key );
+			$deleted = $this->client->delete_object( $key );
+			if ( is_wp_error( $deleted ) ) {
+				// Best-effort: a failed delete (network blip, transient 5xx)
+				// leaves an orphaned object in R2. Log it so it can be reaped
+				// later rather than failing silently.
+				error_log( sprintf( 'r2offload: delete failed for %s (attachment %d): %s', $key, (int) $attachment_id, $deleted->get_error_message() ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			}
 		}
 	}
 

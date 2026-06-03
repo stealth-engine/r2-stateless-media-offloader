@@ -332,18 +332,30 @@ class Migrator {
 			return;
 		}
 
+		$local     = $this->local_path_for( $attachment_id, $size, $item );
+		$has_local = ( '' !== $local && is_readable( $local ) );
+
 		// Anything already in R2 is adopted, not re-uploaded — this is what lets
 		// the migrator register media copied into R2 by an external tool (e.g.
 		// Cloudflare Super Slurper) without moving bytes. Dry-run checks this too
 		// so its preview counts/sizes reflect what an upload would actually skip
 		// rather than overstating the remaining work.
-		if ( $this->client->object_exists( $key ) ) {
-			$result['skipped'] += 1;
-			return;
+		//
+		// When we have a local copy, confirm the R2 object is the SAME size
+		// before trusting it — a mismatch (wrong/partial object at the computed
+		// key) must re-upload rather than be silently adopted, since adoption
+		// marks the attachment synced and authorises deleting the local copy in
+		// Stateless mode. Without a local copy we trust existence (the operator
+		// can run verify mode for a full check).
+		$head = $this->client->head_object( $key );
+		if ( null !== $head ) {
+			$size_ok = ! ( $has_local && null !== $head['size'] && (int) filesize( $local ) !== (int) $head['size'] );
+			if ( $size_ok ) {
+				$result['skipped'] += 1;
+				return;
+			}
+			// else: size disagrees with the local source — fall through and re-upload.
 		}
-
-		$local     = $this->local_path_for( $attachment_id, $size, $item );
-		$has_local = ( '' !== $local && is_readable( $local ) );
 
 		if ( $this->dry_run ) {
 			$bytes = $this->measure_source( $attachment_id, $size, $item, $local, $has_local, $result, $key );
@@ -512,13 +524,17 @@ class Migrator {
 			return '';
 		}
 		if ( '' === $size ) {
-			return $base;
+			$url = $base;
+		} else {
+			$pos = strrpos( $base, '/' );
+			$url = ( false === $pos ) ? $base : substr( $base, 0, $pos + 1 ) . $item['filename'];
 		}
-		$pos = strrpos( $base, '/' );
-		if ( false === $pos ) {
-			return $base;
-		}
-		return substr( $base, 0, $pos + 1 ) . $item['filename'];
+
+		// SSRF guard: only fetch from a public host. wp_http_validate_url()
+		// rejects loopback / private / reserved-IP targets, so a crafted
+		// attachment URL (or a compromised upstream URL filter) can't make the
+		// server fetch an internal endpoint. Treat a rejected URL as "no source".
+		return wp_http_validate_url( $url ) ? $url : '';
 	}
 
 	/**

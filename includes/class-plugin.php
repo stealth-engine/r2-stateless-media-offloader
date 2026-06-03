@@ -78,6 +78,16 @@ final class Plugin {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
+		// A stored secret that no longer decrypts (auth salt rotated) makes the
+		// plugin behave as unconfigured — say so explicitly instead of leaving
+		// the admin to guess from upload failures.
+		if ( $this->settings->secret_decrypt_failed() ) {
+			printf(
+				'<div class="notice notice-error"><p>%s</p></div>',
+				esc_html__( 'R2 Media Offload: the stored Secret Access Key could not be decrypted (the site\'s security keys may have changed). Re-enter it in Settings → R2 Offload.', 'r2-stateless-media-offload' )
+			);
+			return;
+		}
 		if ( ! $this->settings->is_configured() || $this->settings->serves_public_url() ) {
 			return;
 		}

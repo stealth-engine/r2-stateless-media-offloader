@@ -90,8 +90,11 @@ jQuery(function($){
 		// fall back to a local derivation only if an older response omits it.
 		var resumable = ('resumable' in s) ? !!s.resumable
 			: (!s.running && !s.finished_at && ((s.started_at > 0) || s.cursor));
+		// A retry pass (pass > 1) re-walks the library, so processed resets to 0;
+		// label it so the reset reads as "Pass N" rather than lost progress.
+		var passLabel = (s.pass && s.pass > 1) ? ' (retry pass ' + s.pass + ')' : '';
 		$txt.text(
-			(s.running ? 'Running' : (s.finished_at ? 'Done' : (resumable ? 'Stopped' : 'Idle'))) +
+			(s.running ? 'Running' : (s.finished_at ? 'Done' : (resumable ? 'Stopped' : 'Idle'))) + passLabel +
 			' — ' + s.processed + ' / ' + s.total + ' processed' +
 			'  ·  uploaded ' + s.uploaded + '  ·  skipped ' + s.skipped + '  ·  errors ' + s.errors
 		);
