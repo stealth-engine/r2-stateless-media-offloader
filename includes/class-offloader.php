@@ -60,6 +60,9 @@ class Offloader {
 			: (string) get_post_meta( $attachment_id, '_wp_attached_file', true );
 		$original_key = $this->settings->object_key( $original_relative );
 
+		$already_synced = (bool) get_post_meta( $attachment_id, Settings::META_SYNCED, true );
+		$is_stateless   = 'stateless' === $this->settings->get( 'mode' );
+
 		$cache_control = $this->settings->get( 'cache_control' );
 		$headers       = ( '' !== $cache_control ) ? array( 'Cache-Control' => $cache_control ) : array();
 		$uploaded_paths   = array();
@@ -76,7 +79,18 @@ class Offloader {
 			}
 			$result = $this->client->upload_file( $local_path, $key, '', $headers );
 			if ( is_wp_error( $result ) ) {
-				// Leave local copies in place if any upload fails — never strand media.
+				// A variant failed to reach R2. If this attachment was already
+				// synced (e.g. a re-offload after a new image size was added),
+				// the URL rewriter would keep serving every size from R2 and the
+				// missing one 404s. In CDN mode the local copies are intact, so
+				// drop the synced flag to serve everything locally until a later
+				// offload restores full R2 coverage. In Stateless mode the other
+				// variants live only in R2, so un-syncing would 404 them instead
+				// — keep serving from R2 and let the next pass retry. Either way,
+				// leave local copies in place; never strand media.
+				if ( $already_synced && ! $is_stateless ) {
+					delete_post_meta( $attachment_id, Settings::META_SYNCED );
+				}
 				return $metadata;
 			}
 			$uploaded_paths[] = $local_path;
@@ -84,8 +98,6 @@ class Offloader {
 				$original_uploaded = true;
 			}
 		}
-
-		$already_synced = (bool) get_post_meta( $attachment_id, Settings::META_SYNCED, true );
 
 		// Only mark the attachment offloaded once the ORIGINAL and every size
 		// are in R2 — a stray size upload (or a skipped, missing variant) must
@@ -110,7 +122,7 @@ class Offloader {
 		// deleting the local files would 404 the media. Keep the local copies
 		// (CDN-like) until a custom domain is configured.
 		if (
-			'stateless' === $this->settings->get( 'mode' )
+			$is_stateless
 			&& $this->settings->serves_public_url()
 			&& ( ( $original_uploaded && $all_present ) || $already_synced )
 		) {

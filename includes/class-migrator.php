@@ -170,14 +170,20 @@ class Migrator {
 	 *
 	 * @param int    $batch_size
 	 * @param string $cursor Last processed attachment ID (exclusive lower bound).
+	 * @param int    $max_seconds Wall-clock budget; stop after the item that
+	 *                            crosses it (0 = no limit). Keeps a batch from
+	 *                            outliving the runner's lock TTL when items fetch
+	 *                            remotely with long per-file timeouts.
 	 * @return array {
 	 *     processed:int, uploaded:int, skipped:int, bytes:int,
 	 *     errors:string[], next_cursor:string, done:bool
 	 * }
 	 */
-	public function migrate_batch( $batch_size = 100, $cursor = '' ) {
+	public function migrate_batch( $batch_size = 100, $cursor = '', $max_seconds = 0 ) {
 		$batch_size = max( 1, (int) $batch_size );
 		$cursor_id  = '' === $cursor ? 0 : (int) $cursor;
+		$max_seconds = max( 0, (int) $max_seconds );
+		$started     = microtime( true );
 
 		global $wpdb;
 		$ids = $wpdb->get_col(
@@ -220,9 +226,18 @@ class Migrator {
 			foreach ( $res['errors'] as $err ) {
 				$aggregate['errors'][] = sprintf( '[#%d] %s', $id, $err );
 			}
+
+			// Time-box: stop after the item that crosses the budget so the batch
+			// can't run long enough for the runner's lock to expire under it.
+			if ( $max_seconds > 0 && ( microtime( true ) - $started ) >= $max_seconds ) {
+				$timeboxed = true;
+				break;
+			}
 		}
 
-		$aggregate['done'] = count( $ids ) < $batch_size;
+		// Done only when we actually reached the end of the table — never when
+		// we stopped early on the time budget (there's more past the cursor).
+		$aggregate['done'] = empty( $timeboxed ) && count( $ids ) < $batch_size;
 		return $aggregate;
 	}
 

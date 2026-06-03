@@ -266,12 +266,35 @@ class R2_Client {
 		}
 
 		// Guard against a truncated download: compare against Content-Length.
+		// If the GET response omitted it (chunked/streamed), fall back to a HEAD
+		// so a short stream can't pass as a complete restore.
 		$len = wp_remote_retrieve_header( $response, 'content-length' );
-		if ( '' !== (string) $len && (int) $len !== (int) filesize( $local_path ) ) {
+		if ( '' === (string) $len ) {
+			$len = $this->remote_object_size( $key );
+		}
+		if ( '' !== (string) $len && null !== $len && (int) $len !== (int) filesize( $local_path ) ) {
 			wp_delete_file( $local_path );
 			return new \WP_Error( 'r2offload_download_incomplete', __( 'Downloaded object was incomplete.', 'r2-stateless-media-offload' ) );
 		}
 		return true;
+	}
+
+	/**
+	 * The byte size of an object via HEAD, or null if unavailable.
+	 *
+	 * @param string $key
+	 * @return int|null
+	 */
+	private function remote_object_size( $key ) {
+		$response = $this->request( 'HEAD', '/' . ltrim( $key, '/' ) );
+		if ( is_wp_error( $response ) ) {
+			return null;
+		}
+		if ( 200 !== (int) wp_remote_retrieve_response_code( $response ) ) {
+			return null;
+		}
+		$len = wp_remote_retrieve_header( $response, 'content-length' );
+		return ( '' === (string) $len ) ? null : (int) $len;
 	}
 
 	/**

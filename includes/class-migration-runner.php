@@ -32,6 +32,10 @@ class Migration_Runner {
 	// finishes with errors we re-scan from the start to retry them — already-
 	// done items skip fast. Bounded so permanent failures can't loop forever.
 	const MAX_PASSES = 3;
+	// Wall-clock budget for one batch. Kept well under LOCK_TTL so a batch can
+	// never run long enough for the lock to expire and admit a second worker on
+	// the same cursor — even after the single slow item that crosses the budget.
+	const BATCH_MAX_SECONDS = 45;
 	// Long enough that a healthy batch (up to BATCH items, each able to block
 	// on a remote download) is never mistaken for a crashed worker; the
 	// compare-and-swap in acquire_lock() is the actual correctness guarantee,
@@ -235,7 +239,7 @@ class Migration_Runner {
 				$migrator->set_dry_run( 'dry-run' === $state['mode'] )
 					->set_verify( 'verify' === $state['mode'] );
 
-				$result = $migrator->migrate_batch( self::BATCH, (string) $state['cursor'] );
+				$result = $migrator->migrate_batch( self::BATCH, (string) $state['cursor'], self::BATCH_MAX_SECONDS );
 
 				$state['processed'] += (int) $result['processed'];
 				$state['uploaded']  += (int) $result['uploaded'];
