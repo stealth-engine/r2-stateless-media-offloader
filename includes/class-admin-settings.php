@@ -89,9 +89,10 @@ class Admin_Settings {
 			if ( $this->settings->is_constant( $key ) ) {
 				continue; // Locked by wp-config — never store.
 			}
-			$raw          = isset( $_POST[ $key ] ) ? wp_unslash( $_POST[ $key ] ) : '';
-			$raw          = is_string( $raw ) ? $raw : ''; // A crafted array submission must not warn.
-			$new[ $key ] = sanitize_text_field( $raw );
+			// sanitize_text_field() returns '' for an array/object, so a crafted
+			// array submission is handled safely without a warning. Inlined so the
+			// ValidatedSanitizedInput sniff sees the unslash+sanitize together.
+			$new[ $key ] = isset( $_POST[ $key ] ) ? sanitize_text_field( wp_unslash( $_POST[ $key ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- maybe_save() verifies the nonce before this runs.
 		}
 
 		// Mode (radio) — only the two known values; default to the safe on-ramp.
@@ -207,6 +208,7 @@ JS;
 
 		if ( ! $this->settings->is_configured() ) {
 			wp_send_json_error( array( 'message' => __( 'Save your credentials first, then test.', 'r2-stateless-media-offload' ) ) );
+			return; // wp_send_json_error already exits; explicit for static analysis.
 		}
 
 		$result = Plugin::instance()->client()->test_connection();

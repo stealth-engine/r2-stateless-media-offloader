@@ -40,7 +40,7 @@ function r2offload_uninstall_cleanup_site() {
 // Migration_Runner::on_deactivate(). number => 0 means "no limit".
 if ( is_multisite() ) {
 	// On a very large network the synchronous per-site cleanup can approach PHP's
-	// max_execution_time. Stop ~10s short of it rather than fataling mid-uninstall:
+	// max_execution_time. Stop at ~80% of it rather than fataling mid-uninstall:
 	// the only cost of an unreached site is harmless leftover options/meta (the
 	// plugin is gone either way), which a network admin can mop up via WP-CLI, e.g.
 	//   wp site list --field=url | xargs -I% wp option delete r2offload_settings --url=%

@@ -208,8 +208,8 @@ class Settings {
 	 * migrator and delete path can never disagree on which files an attachment
 	 * comprises. The original is always first.
 	 *
-	 * @param array  $metadata Attachment metadata (wp_get_attachment_metadata()).
-	 * @param string $relative Original `_wp_attached_file` path.
+	 * @param array|false $metadata Attachment metadata (wp_get_attachment_metadata() returns false for missing/corrupt data, hence the is_array guards below).
+	 * @param string      $relative Original `_wp_attached_file` path.
 	 * @return array<int,array{relative:string,size:string,filename:string}>
 	 */
 	public static function enumerate_files( $metadata, $relative ) {

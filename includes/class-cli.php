@@ -52,7 +52,7 @@ class CLI {
 		// 2. Upload.
 		$key = 'r2offload-test/' . gmdate( 'Ymd-His' ) . '.txt';
 		$tmp = wp_tempnam( 'r2offload-test' );
-		file_put_contents( $tmp, "r2offload round-trip test\n" ); // phpcs:ignore
+		file_put_contents( $tmp, "r2offload round-trip test\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations -- diagnostic round-trip: a few bytes to a wp_tempnam() file in a CLI-only command.
 		\WP_CLI::log( "2/5 upload  -> {$key}" );
 		$res = $client->upload_file( $tmp, $key, 'text/plain', array( 'Cache-Control' => 'no-store' ) );
 		wp_delete_file( $tmp );

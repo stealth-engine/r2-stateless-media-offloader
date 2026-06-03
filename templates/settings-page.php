@@ -60,7 +60,7 @@ $r2offload_locked_mode = $settings->is_constant( 'mode' );
 <div class="wrap">
 	<h1><?php esc_html_e( 'R2 Stateless Media Offload', 'r2-stateless-media-offload' ); ?></h1>
 
-	<?php if ( isset( $_GET['updated'] ) && 'true' === $_GET['updated'] ) : // phpcs:ignore WordPress.Security.NonceVerification.Recommended ?>
+	<?php if ( isset( $_GET['updated'] ) && 'true' === sanitize_text_field( wp_unslash( $_GET['updated'] ) ) ) : // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only "saved" flag after a nonce-checked redirect. ?>
 		<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'r2-stateless-media-offload' ); ?></p></div>
 	<?php endif; ?>
 

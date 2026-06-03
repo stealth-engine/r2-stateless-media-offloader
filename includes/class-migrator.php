@@ -220,7 +220,7 @@ class Migrator {
 		// so a final batch of exactly $batch_size isn't mistaken for "maybe more"
 		// (which would force a trailing empty tick and leave the run on "Running"
 		// until cron fires again — bad when the count is a multiple of the batch).
-		$ids = $wpdb->get_col(
+		$ids = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- keyset-paginated attachment scan; prepared, and intentionally uncached (cross-request migration cursor).
 			$wpdb->prepare(
 				"SELECT ID FROM {$wpdb->posts}
 					WHERE post_type = 'attachment'
