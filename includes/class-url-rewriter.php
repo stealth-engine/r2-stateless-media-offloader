@@ -279,7 +279,13 @@ class URL_Rewriter {
 				continue;
 			}
 			// "URL [descriptor]" — split on the first whitespace run.
-			$parts     = preg_split( '/\s+/', $candidate, 2 );
+			$parts = preg_split( '/\s+/', $candidate, 2 );
+			if ( ! is_array( $parts ) || ! isset( $parts[0] ) ) {
+				// preg_split only returns false on a PCRE error (not possible for
+				// the static /\s+/), but guard defensively: leave the candidate as-is.
+				$out[] = $candidate;
+				continue;
+			}
 			$rewritten = $this->rewrite_same_dir( $attachment_id, $parts[0] );
 			$url       = ( null !== $rewritten ) ? esc_url( $rewritten ) : $parts[0];
 			$out[]     = isset( $parts[1] ) ? $url . ' ' . $parts[1] : $url;
@@ -327,6 +333,15 @@ class URL_Rewriter {
 		$key = $this->original_key( $attachment_id );
 		if ( false === $key ) {
 			return null;
+		}
+		// Already an R2 URL on our public base (e.g. a core-generated srcset
+		// candidate that the content-tag pass re-processes) — return it unchanged.
+		// Re-deriving the key from an already percent-encoded basename and
+		// re-encoding it would double-encode '%' for non-ASCII/space filenames
+		// (e.g. %E5%9B%BE → %25E5%259B%25BE), breaking the URL on every render.
+		$base = $this->settings->public_base_url();
+		if ( '' !== $base && 0 === strpos( (string) $local_url, $base ) ) {
+			return $local_url;
 		}
 		$dir = dirname( $key );
 		$dir = ( '.' === $dir ) ? '' : trailingslashit( $dir );

@@ -284,7 +284,16 @@ class Local_Fallback {
 		if ( ! empty( $uploads['error'] ) || empty( $uploads['basedir'] ) ) {
 			return false;
 		}
-		$path = wp_normalize_path( (string) $path );
+		// Decode percent-encoding and reject null bytes BEFORE the traversal checks
+		// — purely for this safety DECISION (the actual restore still uses the
+		// original $path). A hostile/buggy get_attached_file filter could otherwise
+		// hide a "/../" behind %2e%2e%2f, or embed a %00 that fatals PHP 8's
+		// filesystem calls; decoding first lets the literal checks below catch it,
+		// falling back to the system temp dir instead.
+		$path = wp_normalize_path( rawurldecode( (string) $path ) );
+		if ( false !== strpos( $path, "\0" ) ) {
+			return false;
+		}
 		// Reject any parent-traversal segment: a plain string prefix check would
 		// let "<basedir>/../../x" pass while the OS resolves it outside uploads.
 		if ( false !== strpos( $path . '/', '/../' ) ) {
