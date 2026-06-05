@@ -86,16 +86,20 @@ $r2offload_has_run = $r2offload_running || $r2offload_resumable;
 	//   Pause — enabled when a run is active or paused; one toggle button labelled
 	//           "Pause" while running and "Resume" while paused.
 	//   Stop  — terminal (not resumable); enabled when a run is active or paused.
-	$r2offload_pause_lbl = $r2offload_running
-		? __( 'Pause', 'r2-stateless-media-offload' )
-		: __( 'Resume', 'r2-stateless-media-offload' );
+	// Only a paused run resumes; bootstrap the toggle's label AND data-action from
+	// the server so an early click (before the first status poll) hits the right
+	// endpoint.
+	$r2offload_can_resume = $r2offload_resumable && ! $r2offload_running;
+	$r2offload_pause_lbl  = $r2offload_can_resume
+		? __( 'Resume', 'r2-stateless-media-offload' )
+		: __( 'Pause', 'r2-stateless-media-offload' );
 	?>
 	<p>
 		<?php // Not gated on credentials: a dry-run preview (count + size) runs without them, matching `wp r2offload sync --dry-run`. Upload/verify without credentials return a clear error. ?>
 		<button type="button" class="button button-primary" id="r2offload-mig-start" <?php disabled( $r2offload_has_run ); ?>>
 			<?php esc_html_e( 'Start', 'r2-stateless-media-offload' ); ?>
 		</button>
-		<button type="button" class="button" id="r2offload-mig-pause" <?php disabled( ! $r2offload_has_run ); ?>>
+		<button type="button" class="button" id="r2offload-mig-pause" data-action="<?php echo esc_attr( $r2offload_can_resume ? 'resume' : 'pause' ); ?>" <?php disabled( ! $r2offload_has_run ); ?>>
 			<?php echo esc_html( $r2offload_pause_lbl ); ?>
 		</button>
 		<button type="button" class="button" id="r2offload-mig-stop" <?php disabled( ! $r2offload_has_run ); ?>>

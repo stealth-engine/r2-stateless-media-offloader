@@ -139,10 +139,13 @@ jQuery(function($){
 		if (s.mode) { $mode.val(s.mode); }
 		// Buttons: Start only when idle/done; Pause/Stop only when a run is
 		// active or paused; the Pause button doubles as Resume when paused.
+		// Only a PAUSED run resumes; idle/done/stopped default to "Pause" so a
+		// disabled terminal button never misleadingly reads "Resume".
+		var canResume = resumable && !s.running;
 		$start.prop('disabled', hasRun);
 		$pause.prop('disabled', !hasRun)
-			.text( s.running ? R2OFFLOAD_MIG.pause : R2OFFLOAD_MIG.resume )
-			.data('action', s.running ? 'pause' : 'resume');
+			.text( canResume ? R2OFFLOAD_MIG.resume : R2OFFLOAD_MIG.pause )
+			.data('action', canResume ? 'resume' : 'pause');
 		$stop.prop('disabled', !hasRun);
 		$mode.prop('disabled', hasRun);
 	}
@@ -205,7 +208,11 @@ JS;
 		// run. Treat it as a no-op that returns the live state. (A crashed run
 		// keeps running=true but self-resumes via its already-scheduled tick.)
 		$current = $this->runner->state();
-		if ( ! empty( $current['running'] ) ) {
+		// Don't reset a run that's active OR merely paused (resumable). The UI
+		// disables Start in both cases, but a stale tab or a direct admin-ajax call
+		// could still hit this and wipe a paused run's cursor/counters/run_id. To
+		// start fresh over a paused run, Stop (cancel) it first.
+		if ( ! empty( $current['running'] ) || $this->runner->is_resumable( $current ) ) {
 			$this->respond( $current );
 			return; // respond() (wp_send_json_success) already exits; explicit for static analysis.
 		}

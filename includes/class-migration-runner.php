@@ -280,6 +280,10 @@ class Migration_Runner {
 		$this->stop(); // running=false (CAS-preserves counters), clears schedule + lock.
 		wp_cache_delete( self::STATE_OPTION, 'options' );
 		$state              = $this->fresh_state();
+		// Force the terminal invariant: a start() racing between stop() and this
+		// read could have flipped running back to true — a cancelled run must never
+		// stay running, or the UI keeps polling a run that can't advance.
+		$state['running']   = false;
 		$state['cancelled'] = true;
 		$state['run_id']    = '';
 		update_option( self::STATE_OPTION, $state, false );
