@@ -265,8 +265,16 @@ class Migration_Runner {
 	 */
 	public function count_synced() {
 		global $wpdb;
-		return (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- single indexed COUNT, constant query, no user input.
-			$wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = %s", Settings::META_SYNCED )
+		// Scope to non-trashed attachments to match count_attachments() (the "total"
+		// denominator). Counting raw postmeta rows would include sync meta left on a
+		// trashed attachment, inflating "migrated" past "total".
+		return (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- indexed COUNT over a join, constant query, no user input.
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$wpdb->postmeta} pm
+				 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+				 WHERE pm.meta_key = %s AND p.post_type = 'attachment' AND p.post_status != 'trash'",
+				Settings::META_SYNCED
+			)
 		);
 	}
 
@@ -279,17 +287,25 @@ class Migration_Runner {
 	 * @return array The persisted state.
 	 */
 	public function cancel() {
-		$this->stop(); // running=false (CAS-preserves counters), clears schedule + lock.
-		wp_cache_delete( self::STATE_OPTION, 'options' );
-		$state              = $this->fresh_state();
-		// Force the terminal invariant: a start() racing between stop() and this
-		// read could have flipped running back to true — a cancelled run must never
-		// stay running, or the UI keeps polling a run that can't advance.
-		$state['running']   = false;
-		$state['cancelled'] = true;
-		$state['run_id']    = '';
-		update_option( self::STATE_OPTION, $state, false );
-		return $state;
+		// Stamp the terminal flags (running=false, cancelled, cleared run_id) onto
+		// the FRESHEST state via CAS — same retry flow as stop() — so a worker that
+		// saves newer cursor/counters between our read and write isn't clobbered.
+		// Clearing run_id makes any later worker discard its post-batch write.
+		for ( $attempt = 0; $attempt < self::PERSIST_RETRIES; $attempt++ ) {
+			wp_cache_delete( self::STATE_OPTION, 'options' );
+			$expected = get_option( self::STATE_OPTION, array() );
+			$state    = array_merge( self::default_state(), is_array( $expected ) ? $expected : array() );
+			$state['running']   = false;
+			$state['cancelled'] = true;
+			$state['run_id']    = '';
+			if ( $this->cas_state( $expected, $state ) ) {
+				break;
+			}
+			// CAS lost to a concurrent worker write — re-read and retry.
+		}
+		$this->clear_scheduled();
+		$this->release_lock();
+		return $this->fresh_state();
 	}
 
 	/**
@@ -431,21 +447,21 @@ class Migration_Runner {
 				$state['bytes']     += (int) $result['bytes'];
 				$state['cursor']     = (string) $result['next_cursor'];
 				// Circuit breaker: a batch that THREW bumps the streak in catch
-				// below. Also bump it when an UPLOAD batch processed items but NONE
-				// had any successful outcome — i.e. every item failed (e.g. wrong
-				// credentials → every PUT 403). Otherwise a uniformly-failing run
-				// would grind through all MAX_PASSES passes of the whole library
-				// before stopping. ANY successful outcome clears it — including
-				// adoption (uploaded=skipped=0 but adopted>0, the Super Slurper
-				// path) and updates, or the breaker would trip on a fully-adopted
-				// library. Dry-run/verify count progress differently, so only gate upload.
+				// below. Also bump it when an upload/force batch processed items but
+				// NONE had any successful outcome — i.e. every item failed (e.g. wrong
+				// credentials → every PUT 403) — so a uniformly-failing run aborts
+				// instead of grinding the whole library. ANY successful outcome clears
+				// it — including adoption (uploaded=skipped=0 but adopted>0, the Super
+				// Slurper path) and updates, or the breaker would trip on a fully-
+				// adopted library. Force writes too, so it's gated alongside upload;
+				// dry-run/verify count progress differently and are not gated.
 				$batch_made_progress = (
 					(int) $result['uploaded'] > 0
 					|| (int) $result['updated'] > 0
 					|| (int) $result['adopted'] > 0
 					|| (int) $result['skipped'] > 0
 				);
-				if ( 'upload' === $state['mode'] && (int) $result['processed'] > 0 && ! $batch_made_progress ) {
+				if ( in_array( $state['mode'], array( 'upload', 'force' ), true ) && (int) $result['processed'] > 0 && ! $batch_made_progress ) {
 					++$state['fail_streak'];
 				} else {
 					$state['fail_streak'] = 0;
