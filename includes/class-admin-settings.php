@@ -189,33 +189,86 @@ class Admin_Settings {
 	private function inline_js() {
 		return <<<'JS'
 jQuery(function($){
-	var $btn = $('#r2offload-test-connection');
-	if ( ! $btn.length ) { return; }
-	var $out = $('#r2offload-test-result');
+	var $form = $('#r2offload-settings-form');
+	var $out  = $('#r2offload-test-result');
 	// Render a message as plain text — never as HTML — to avoid injecting
 	// server-supplied content (e.g. an R2 error body) as markup.
 	function show(cls, msg){
 		$out.attr('class','notice ' + cls + ' inline').empty().append($('<p>').text(msg)).show();
 	}
-	$btn.on('click', function(e){
-		e.preventDefault();
-		$btn.prop('disabled', true);
-		show('notice-info', R2OFFLOAD.testing);
-		$.post(ajaxurl, { action: R2OFFLOAD.action, nonce: R2OFFLOAD.nonce })
-			.done(function(res){
-				var ok = res && res.success;
-				var msg = (res && res.data && res.data.message) ? res.data.message : (ok ? 'OK' : R2OFFLOAD.failed);
-				show(ok ? 'notice-success' : 'notice-error', msg);
+
+	// --- Test Connection against the values CURRENTLY in the form (unsaved) ---
+	var $btn = $('#r2offload-test-connection');
+	if ( $btn.length ) {
+		$btn.on('click', function(e){
+			e.preventDefault();
+			$btn.prop('disabled', true);
+			show('notice-info', R2OFFLOAD.testing);
+			$.post(ajaxurl, {
+				action: R2OFFLOAD.action,
+				nonce: R2OFFLOAD.nonce,
+				account_id: $('#r2offload_account_id').val() || '',
+				access_key: $('#r2offload_access_key').val() || '',
+				secret_key: $('#r2offload_secret_key').val() || '',
+				bucket: $('#r2offload_bucket').val() || '',
+				custom_domain: $('#r2offload_custom_domain').val() || ''
 			})
-			.fail(function(){ show('notice-error', R2OFFLOAD.failed); })
-			.always(function(){ $btn.prop('disabled', false); });
-	});
+				.done(function(res){
+					var ok = res && res.success;
+					var msg = (res && res.data && res.data.message) ? res.data.message : (ok ? 'OK' : R2OFFLOAD.failed);
+					show(ok ? 'notice-success' : 'notice-error', msg);
+				})
+				.fail(function(){ show('notice-error', R2OFFLOAD.failed); })
+				.always(function(){ $btn.prop('disabled', false); });
+		});
+	}
+
+	// --- Revert unsaved changes (shown only when the form is dirty) ---
+	var $revert = $('#r2offload-revert');
+	if ( $form.length && $revert.length ) {
+		var $fields = $form.find('input[type=text], input[type=password], input[type=radio]');
+		var snap = {};
+		$fields.each(function(){
+			if ( this.type === 'radio' ) {
+				if ( this.checked ) { snap['r:' + this.name] = this.value; }
+			} else {
+				snap['v:' + this.name] = this.value;
+			}
+		});
+		function dirty(){
+			var d = false;
+			$fields.each(function(){
+				if ( this.type === 'radio' ) {
+					if ( this.checked && snap['r:' + this.name] !== this.value ) { d = true; }
+				} else if ( (this.value || '') !== (snap['v:' + this.name] || '') ) {
+					d = true;
+				}
+			});
+			return d;
+		}
+		function refresh(){ $revert.toggle( dirty() ); }
+		$form.on('input change', 'input', refresh);
+		$revert.on('click', function(e){
+			e.preventDefault();
+			$fields.each(function(){
+				if ( this.type === 'radio' ) {
+					this.checked = ( snap['r:' + this.name] === this.value );
+				} else {
+					this.value = ( snap['v:' + this.name] || '' );
+				}
+			});
+			$out.hide();
+			refresh();
+		});
+		refresh(); // Hidden initially (clean form).
+	}
 });
 JS;
 	}
 
 	/**
-	 * AJAX: test the currently-saved (or constant) R2 configuration.
+	 * AJAX: test the R2 credentials currently in the form — which may be UNSAVED —
+	 * so the user can verify before saving. Nothing is persisted.
 	 */
 	public function ajax_test_connection() {
 		if ( ! current_user_can( 'manage_options' ) ) {
@@ -224,12 +277,35 @@ JS;
 		}
 		check_ajax_referer( self::AJAX_ACTION, 'nonce' );
 
-		if ( ! $this->settings->is_configured() ) {
-			wp_send_json_error( array( 'message' => __( 'Save your credentials first, then test.', 'r2-stateless-media-offload' ) ) );
+		// Carry the posted (possibly unsaved) form values as overrides on a
+		// THROWAWAY Settings instance. Fields not posted — and a blank secret (the
+		// password field is empty when unchanged) — fall back to the saved value;
+		// wp-config constants still win. Persists nothing.
+		$overrides = array();
+		foreach ( array( 'account_id', 'access_key', 'bucket', 'custom_domain' ) as $key ) {
+			if ( isset( $_POST[ $key ] ) ) {
+				$overrides[ $key ] = sanitize_text_field( wp_unslash( $_POST[ $key ] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- check_ajax_referer() above verifies the nonce.
+			}
+		}
+		// Secret: only override when a value was actually typed; trim only (a secret
+		// is opaque — never run it through sanitize_text_field), and never echo/store it.
+		if ( isset( $_POST['secret_key'] ) ) {
+			$raw    = wp_unslash( $_POST['secret_key'] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- nonce verified above. WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- opaque secret, trimmed below, never echoed/stored.
+			$secret = is_string( $raw ) ? trim( $raw ) : '';
+			if ( '' !== $secret ) {
+				$overrides['secret_key'] = $secret;
+			}
+		}
+
+		$probe = new Settings();
+		$probe->set_overrides( $overrides );
+
+		if ( ! $probe->is_configured() ) {
+			wp_send_json_error( array( 'message' => __( 'Enter your Account ID, Access Key ID, Secret Access Key and Bucket, then test.', 'r2-stateless-media-offload' ) ) );
 			return; // wp_send_json_error already exits; explicit for static analysis.
 		}
 
-		$result = Plugin::instance()->client()->test_connection();
+		$result = ( new R2_Client( $probe ) )->test_connection();
 		if ( is_wp_error( $result ) ) {
 			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
 			return; // wp_send_json_error already exits; explicit for static analysis.

@@ -122,6 +122,11 @@ $r2offload_locked_mode = $settings->is_constant( 'mode' );
 			</tr>
 		</table>
 
-		<?php submit_button(); ?>
+		<p class="submit">
+			<?php submit_button( __( 'Save Changes', 'r2-stateless-media-offload' ), 'primary', 'submit', false ); ?>
+			<button type="button" class="button" id="r2offload-revert" style="display:none;">
+				<?php esc_html_e( 'Revert Unsaved Changes', 'r2-stateless-media-offload' ); ?>
+			</button>
+		</p>
 	</form>
 </div>

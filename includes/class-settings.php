@@ -61,6 +61,16 @@ class Settings {
 	private $stored = null;
 
 	/**
+	 * In-memory overrides that take precedence over the stored option (but never
+	 * over a wp-config constant). Used to evaluate a connection test against
+	 * unsaved form values without persisting them. Values are verbatim — a
+	 * secret_key override is PLAINTEXT, not the encrypted-at-rest form.
+	 *
+	 * @var array<string,string>
+	 */
+	private $overrides = array();
+
+	/**
 	 * Resolve a setting: constant first, then DB, then default.
 	 *
 	 * @param string $key
@@ -69,6 +79,11 @@ class Settings {
 	public function get( $key ) {
 		if ( isset( $this->constants[ $key ] ) && defined( $this->constants[ $key ] ) ) {
 			return (string) constant( $this->constants[ $key ] );
+		}
+		// In-memory override (e.g. testing unsaved form values) — verbatim, so a
+		// secret_key override is returned as-is (plaintext), not decrypted.
+		if ( array_key_exists( $key, $this->overrides ) ) {
+			return $this->overrides[ $key ];
 		}
 		$stored = $this->stored();
 		if ( isset( $stored[ $key ] ) && '' !== $stored[ $key ] ) {
@@ -423,6 +438,21 @@ class Settings {
 	 */
 	public function flush_request_cache() {
 		$this->stored = null;
+	}
+
+	/**
+	 * Seed in-memory overrides for known setting keys. Use on a THROWAWAY Settings
+	 * instance (never the shared one) to evaluate a connection test against unsaved
+	 * form values. Unknown keys and non-scalars are ignored.
+	 *
+	 * @param array<string,mixed> $overrides key => value.
+	 */
+	public function set_overrides( array $overrides ) {
+		foreach ( $overrides as $key => $value ) {
+			if ( array_key_exists( $key, $this->constants ) && is_scalar( $value ) ) {
+				$this->overrides[ $key ] = (string) $value;
+			}
+		}
 	}
 
 	/**
