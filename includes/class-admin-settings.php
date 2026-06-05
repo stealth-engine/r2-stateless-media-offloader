@@ -44,6 +44,8 @@ class Admin_Settings {
 		add_action( 'admin_init', array( $this, 'maybe_save' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue' ) );
 		add_action( 'wp_ajax_' . self::AJAX_ACTION, array( $this, 'ajax_test_connection' ) );
+		// Add a "Settings" link to the plugin's row on the Plugins screen.
+		add_filter( 'plugin_action_links_' . plugin_basename( R2OFFLOAD_PLUGIN_FILE ), array( $this, 'add_action_links' ) );
 	}
 
 	/**
@@ -57,6 +59,22 @@ class Admin_Settings {
 			self::PAGE_SLUG,
 			array( $this, 'render_page' )
 		);
+	}
+
+	/**
+	 * Add a "Settings" action link next to Deactivate on wp-admin/plugins.php.
+	 *
+	 * @param string[] $links Existing plugin action links.
+	 * @return string[]
+	 */
+	public function add_action_links( $links ) {
+		$settings_link = sprintf(
+			'<a href="%s">%s</a>',
+			esc_url( add_query_arg( 'page', self::PAGE_SLUG, admin_url( 'options-general.php' ) ) ),
+			esc_html__( 'Settings', 'r2-stateless-media-offload' )
+		);
+		array_unshift( $links, $settings_link );
+		return $links;
 	}
 
 	/**
