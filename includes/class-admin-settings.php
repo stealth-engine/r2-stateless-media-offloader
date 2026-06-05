@@ -149,28 +149,15 @@ class Admin_Settings {
 		// already sent) reads the new values rather than the stale ones.
 		$this->settings->flush_request_cache();
 
-		// Queue a success notice via the Settings API transient so it survives the
-		// redirect and is displayed exactly once. We deliberately do NOT add ?updated
-		// or ?settings-updated to the redirect URL — WordPress itself detects those
-		// parameters and adds its own "Settings saved." to the same queue, which
-		// would produce a duplicate banner.
-		add_settings_error(
-			'r2offload_settings',
-			'r2offload_saved',
-			__( 'Settings saved.', 'r2-stateless-media-offload' ),
-			'success'
-		);
-		set_transient( 'settings_errors', get_settings_errors(), 30 );
+		// Store the success notice in a plugin-owned transient keyed by user so
+		// it survives the redirect and is consumed exactly once. Deliberately
+		// outside the WP settings_errors system: ?updated and ?settings-updated
+		// both trigger core to add its own "Settings saved." to that queue,
+		// producing a duplicate on every known WP version we've tested.
+		set_transient( 'r2offload_settings_saved_' . get_current_user_id(), 1, 60 );
 
-		// 'settings-updated' (not 'updated') is the WP key that tells
-		// get_settings_errors() to load the transient we just stored. Using
-		// 'updated' instead would cause options-general.php to add a second
-		// "Settings saved." notice on top of ours.
 		wp_safe_redirect(
-			add_query_arg(
-				array( 'page' => self::PAGE_SLUG, 'settings-updated' => '1' ),
-				admin_url( 'options-general.php' )
-			)
+			add_query_arg( 'page', self::PAGE_SLUG, admin_url( 'options-general.php' ) )
 		);
 		exit;
 	}

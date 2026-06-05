@@ -296,15 +296,25 @@ class Migrator {
 			$res = $this->migrate_attachment( $id );
 
 			$aggregate['processed']  += 1;
-			$aggregate['uploaded']   += (int) $res['uploaded'];
-			$aggregate['updated']    += (int) $res['updated'];
-			$aggregate['adopted']    += (int) $res['adopted'];
-			$aggregate['skipped']    += (int) $res['skipped'];
 			$aggregate['bytes']      += (int) $res['bytes'];
 			$aggregate['next_cursor'] = (string) $id;
 
-			foreach ( $res['errors'] as $err ) {
-				$aggregate['errors'][] = sprintf( '[#%d] %s', $id, $err );
+			// Count outcomes at ATTACHMENT level (one per attachment, not one per
+			// size variant) so "processed" and the outcome totals stay comparable in
+			// the UI. bytes stays variant-level (real data moved). Primary outcome:
+			// uploaded > updated > adopted > skipped; errors are separate.
+			if ( ! empty( $res['errors'] ) ) {
+				foreach ( $res['errors'] as $err ) {
+					$aggregate['errors'][] = sprintf( '[#%d] %s', $id, $err );
+				}
+			} elseif ( (int) $res['uploaded'] > 0 ) {
+				$aggregate['uploaded'] += 1;
+			} elseif ( (int) $res['updated'] > 0 ) {
+				$aggregate['updated'] += 1;
+			} elseif ( (int) $res['adopted'] > 0 ) {
+				$aggregate['adopted'] += 1;
+			} else {
+				$aggregate['skipped'] += 1;
 			}
 
 			// Build a single-line activity log entry for the UI panel.

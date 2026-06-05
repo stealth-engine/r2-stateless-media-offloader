@@ -60,7 +60,16 @@ $r2offload_locked_mode = $settings->is_constant( 'mode' );
 <div class="wrap">
 	<h1><?php esc_html_e( 'R2 Stateless Media Offload', 'r2-stateless-media-offload' ); ?></h1>
 
-	<?php settings_errors( 'r2offload_settings' ); ?>
+	<?php
+	// Consume the plugin-owned save notice (set by maybe_save() before the
+	// redirect). delete_transient() first so a slow network can't cause the
+	// notice to re-appear if the page is reloaded before the TTL expires.
+	$r2offload_notice_key = 'r2offload_settings_saved_' . get_current_user_id();
+	if ( get_transient( $r2offload_notice_key ) ) {
+		delete_transient( $r2offload_notice_key );
+		echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Settings saved.', 'r2-stateless-media-offload' ) . '</p></div>';
+	}
+	?>
 
 	<form id="r2offload-settings-form" method="post" action="">
 		<?php wp_nonce_field( $nonce_action, $nonce_field ); ?>
