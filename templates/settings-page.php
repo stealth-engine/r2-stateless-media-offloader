@@ -86,6 +86,7 @@ $r2offload_locked_mode = $settings->is_constant( 'mode' );
 
 		<p>
 			<button type="button" class="button" id="r2offload-test-connection"><?php esc_html_e( 'Test Connection', 'r2-stateless-media-offload' ); ?></button>
+			<button type="button" class="button" id="r2offload-revert" style="display:none;"><?php esc_html_e( 'Revert Unsaved Changes', 'r2-stateless-media-offload' ); ?></button>
 			<span id="r2offload-test-result" class="notice inline" style="display:none;margin:0;" role="status" aria-live="polite"></span>
 		</p>
 
@@ -122,11 +123,6 @@ $r2offload_locked_mode = $settings->is_constant( 'mode' );
 			</tr>
 		</table>
 
-		<p class="submit">
-			<?php submit_button( __( 'Save Changes', 'r2-stateless-media-offload' ), 'primary', 'submit', false ); ?>
-			<button type="button" class="button" id="r2offload-revert" style="display:none;">
-				<?php esc_html_e( 'Revert Unsaved Changes', 'r2-stateless-media-offload' ); ?>
-			</button>
-		</p>
+		<?php submit_button(); ?>
 	</form>
 </div>

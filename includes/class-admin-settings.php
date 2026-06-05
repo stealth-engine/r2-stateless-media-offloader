@@ -189,8 +189,7 @@ class Admin_Settings {
 	private function inline_js() {
 		return <<<'JS'
 jQuery(function($){
-	var $form = $('#r2offload-settings-form');
-	var $out  = $('#r2offload-test-result');
+	var $out = $('#r2offload-test-result');
 	// Render a message as plain text — never as HTML — to avoid injecting
 	// server-supplied content (e.g. an R2 error body) as markup.
 	function show(cls, msg){
@@ -223,44 +222,26 @@ jQuery(function($){
 		});
 	}
 
-	// --- Revert unsaved changes (shown only when the form is dirty) ---
+	// --- Revert unsaved changes to the R2 CREDENTIAL fields only ---
 	var $revert = $('#r2offload-revert');
-	if ( $form.length && $revert.length ) {
-		var $fields = $form.find('input[type=text], input[type=password], input[type=radio]');
+	if ( $revert.length ) {
+		var $cred = $('#r2offload_account_id, #r2offload_access_key, #r2offload_secret_key, #r2offload_bucket');
 		var snap = {};
-		$fields.each(function(){
-			if ( this.type === 'radio' ) {
-				if ( this.checked ) { snap['r:' + this.name] = this.value; }
-			} else {
-				snap['v:' + this.name] = this.value;
-			}
-		});
-		function dirty(){
+		$cred.each(function(){ snap[this.id] = this.value; });
+		function credDirty(){
 			var d = false;
-			$fields.each(function(){
-				if ( this.type === 'radio' ) {
-					if ( this.checked && snap['r:' + this.name] !== this.value ) { d = true; }
-				} else if ( (this.value || '') !== (snap['v:' + this.name] || '') ) {
-					d = true;
-				}
-			});
+			$cred.each(function(){ if ( (this.value || '') !== (snap[this.id] || '') ) { d = true; } });
 			return d;
 		}
-		function refresh(){ $revert.toggle( dirty() ); }
-		$form.on('input change', 'input', refresh);
+		function refreshRevert(){ $revert.toggle( credDirty() ); }
+		$cred.on('input change', refreshRevert);
 		$revert.on('click', function(e){
 			e.preventDefault();
-			$fields.each(function(){
-				if ( this.type === 'radio' ) {
-					this.checked = ( snap['r:' + this.name] === this.value );
-				} else {
-					this.value = ( snap['v:' + this.name] || '' );
-				}
-			});
+			$cred.each(function(){ this.value = ( snap[this.id] || '' ); });
 			$out.hide();
-			refresh();
+			refreshRevert();
 		});
-		refresh(); // Hidden initially (clean form).
+		refreshRevert(); // Hidden initially (credentials unchanged).
 	}
 });
 JS;
