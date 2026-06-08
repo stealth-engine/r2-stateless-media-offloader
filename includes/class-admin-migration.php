@@ -169,7 +169,7 @@ jQuery(function($){
 		if ( $errs.length ) {
 			var list = (s.recent_errors && s.recent_errors.length) ? s.recent_errors : [];
 			if ( list.length ) {
-				var $h = $('<p>').css({margin:'0 0 .25em', fontWeight:'600'}).text(R2OFFLOAD_MIG.errorsLbl + ' (' + s.errors + '):');
+				var $h = $('<p>').css({margin:'0 0 .25em', fontWeight:'600'}).text(R2OFFLOAD_MIG.errorsLbl + ' (' + (s.errored || 0) + '):');
 				var $ul = $('<ul>').css({margin:0, paddingLeft:'1.2em'});
 				list.forEach(function(msg){ $ul.append($('<li>').text(msg)); });
 				$errs.empty().append($h).append($ul).show();
@@ -228,10 +228,16 @@ jQuery(function($){
 							render(res.data);
 							$txt.text('Paused — connection was lost. Click Resume to continue.');
 						} else {
-							$txt.text('Connection lost — reload or click Resume to retry.');
+							// Stop request reached the server but was rejected — the run
+							// may still be active. Don't mention Resume here because
+							// render() never ran so the button still reads "Pause".
+							$txt.text('Connection lost — reload to resync the migration state before retrying.');
 						}
 					})
-					.fail(function(){ $txt.text('Connection lost — reload or click Resume to retry.'); });
+					.fail(function(){
+						// Stop request never reached the server — state is unknown.
+						$txt.text('Connection lost — reload to resync the migration state before retrying.');
+					});
 			});
 	}
 	function startPolling(){ if(!polling){ polling = true; pollFailCount = 0; poll(); } }

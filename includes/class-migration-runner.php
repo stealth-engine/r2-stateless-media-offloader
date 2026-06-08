@@ -512,9 +512,13 @@ class Migration_Runner {
 				// Re-counting for the new pass so the admin UI reflects the FINAL
 				// pass (library state) rather than the sum across passes — items
 				// that succeed on retry should drop out of these counts. Matches
-				// the WP-CLI summary. uploaded/updated/bytes stay cumulative (real
-				// bytes moved); processed/adopted/skipped describe library state.
+				// the WP-CLI summary. bytes stays cumulative (real data moved);
+				// all attachment-level outcome counters are reset so processed
+				// === uploaded + updated + adopted + skipped + errored holds
+				// within a single pass and the UI totals never exceed processed.
 				$state['processed']     = 0;
+				$state['uploaded']      = 0;
+				$state['updated']       = 0;
 				$state['adopted']       = 0;
 				$state['skipped']       = 0;
 				$state['errored']       = 0;
