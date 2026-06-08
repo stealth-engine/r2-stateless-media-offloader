@@ -226,7 +226,12 @@ jQuery(function($){
 					.done(function(res){
 						if(res && res.success){
 							render(res.data);
-							$txt.text('Paused — connection was lost. Click Resume to continue.');
+							// Only tell the user to Resume if the server confirmed a
+							// resumable (paused) state; if it finished naturally just
+							// before the connection dropped, render() already shows Done.
+							if ( res.data.resumable ) {
+								$txt.text('Paused — connection was lost. Click Resume to continue.');
+							}
 						} else {
 							// Stop request reached the server but was rejected — the run
 							// may still be active. Don't mention Resume here because
