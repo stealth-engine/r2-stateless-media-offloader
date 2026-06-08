@@ -226,13 +226,15 @@ class Migrator {
 		) {
 			// Partial run: one or more source variants returned 404/410 so the
 			// attachment is incomplete. Remove any prior synced marker so the URL
-			// rewriter doesn't serve stale/missing R2 keys. Record R2 ownership
-			// for variants that ARE confirmed present this run so they can be
-			// reaped on attachment delete (SWR-333) rather than becoming orphans.
+			// rewriter doesn't serve stale/missing R2 keys. Replace (not merge)
+			// the ownership manifest with only the keys confirmed present this
+			// run — record_objects() merges by default, so stale keys from a
+			// prior full sync would survive without the explicit delete first.
 			if ( $was_synced ) {
 				delete_post_meta( $attachment_id, self::META_SYNCED );
 				delete_post_meta( $attachment_id, self::META_KEY );
 			}
+			delete_post_meta( $attachment_id, Settings::META_OBJECTS );
 			if ( ! empty( $result['written_keys'] ) ) {
 				Settings::record_objects( $attachment_id, $result['written_keys'] );
 			}
