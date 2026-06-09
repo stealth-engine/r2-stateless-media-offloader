@@ -425,10 +425,13 @@ class Settings {
 		if ( '' !== $this->decrypt( $raw ) ) {
 			return false;
 		}
-		// Undecryptable blob. If R2OFFLOAD_SECRET_KEY is defined, the constant
-		// is already serving as the active credential (get() falls through to it),
-		// so R2 is operational — don't surface the re-enter notice.
-		if ( isset( $this->constants['secret_key'] ) && defined( $this->constants['secret_key'] ) ) {
+		// Undecryptable blob. If R2OFFLOAD_SECRET_KEY is defined with a usable
+		// (non-empty) value, the constant is already serving as the active
+		// credential (get() falls through to it), so R2 is operational — don't
+		// surface the re-enter notice. A defined-but-empty constant provides no
+		// fallback, so the notice must still fire.
+		if ( isset( $this->constants['secret_key'] ) && defined( $this->constants['secret_key'] )
+			&& '' !== trim( (string) constant( $this->constants['secret_key'] ) ) ) {
 			return false;
 		}
 		return true;

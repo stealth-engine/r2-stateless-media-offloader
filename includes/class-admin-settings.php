@@ -138,10 +138,12 @@ class Admin_Settings {
 			if ( '' !== $migrated ) {
 				// Decryption succeeded — store plaintext going forward.
 				$new['secret_key'] = $migrated;
-			} elseif ( defined( 'R2OFFLOAD_SECRET_KEY' ) ) {
-				// Decryption failed but the constant provides a working credential.
+			} elseif ( defined( 'R2OFFLOAD_SECRET_KEY' ) && '' !== trim( (string) R2OFFLOAD_SECRET_KEY ) ) {
+				// Decryption failed but the constant provides a usable credential.
 				// Drop the undecryptable blob so is_constant() takes over cleanly
 				// and secret_decrypt_failed() stops firing on future requests.
+				// (A defined-but-empty constant is no fallback — keep the blob and
+				// let the notice prompt a re-enter.)
 				unset( $new['secret_key'] );
 			}
 			// Otherwise (no constant, decrypt failed) leave the blob — the admin
