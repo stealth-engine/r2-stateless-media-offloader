@@ -41,6 +41,7 @@ class Admin_Migration {
 		add_action( 'wp_ajax_r2offload_migrate_cancel', array( $this, 'ajax_cancel' ) );
 		add_action( 'wp_ajax_r2offload_migrate_status', array( $this, 'ajax_status' ) );
 		add_action( 'wp_ajax_r2offload_migrate_retry', array( $this, 'ajax_retry' ) );
+		add_action( 'wp_ajax_r2offload_migrate_clear_errors', array( $this, 'ajax_clear_errors' ) );
 	}
 
 	/**
@@ -74,7 +75,10 @@ class Admin_Migration {
 				'resume'    => __( 'Resume', 'r2-stateless-media-offload' ),
 				'errorsLbl' => __( 'Recent errors', 'r2-stateless-media-offload' ),
 				'retryLbl'  => __( 'Retry', 'r2-stateless-media-offload' ),
-				'retryAllLbl' => __( 'Retry All', 'r2-stateless-media-offload' ),
+				'retryAllLbl'       => __( 'Retry All', 'r2-stateless-media-offload' ),
+				'clearAllLbl'       => __( 'Clear All Errors', 'r2-stateless-media-offload' ),
+				'clearAllConfirm'   => __( 'Clear all errors from the list?', 'r2-stateless-media-offload' ),
+				'startWithErrors'   => __( 'There are unresolved errors from the previous run. Starting a new migration will clear them and begin from the beginning. Continue?', 'r2-stateless-media-offload' ),
 				'migrated'  => __( 'Migrated to R2', 'r2-stateless-media-offload' ),
 				'remaining' => __( 'remaining', 'r2-stateless-media-offload' ),
 			)
@@ -96,6 +100,7 @@ jQuery(function($){
 	var $log = $('#r2offload-mig-log');
 	var $logDetails = $('#r2offload-mig-log-details');
 	var polling = false;
+	var lastState = null; // Last rendered state — used by the Start confirmation.
 	var pollFailCount = 0;        // Consecutive AJAX failures; triggers auto-pause after threshold.
 	var POLL_MAX_RETRIES    = 3;  // Auto-pause after this many consecutive poll failures.
 	var POLL_RETRY_DELAY_MS = 2000; // Delay between retry attempts (ms).
@@ -123,7 +128,7 @@ jQuery(function($){
 		$log.scrollTop( $log[0].scrollHeight );
 	}
 
-	function render(s){
+	function render(s){ lastState = s;
 		var pct = s.total > 0 ? Math.min(100, Math.round((s.processed / s.total) * 100)) : 0;
 		$bar.css('width', pct + '%').text(pct + '%');
 		// Animated striped progress bar + spinner while running.
@@ -201,8 +206,8 @@ jQuery(function($){
 					$ul.append($li);
 				});
 
-				// Retry All — fires each retryable ID sequentially, renders once done.
-				var $footer = $('<p>').css({margin:'.5em 0 0'});
+				// Retry All + Clear All — shown when not running.
+				var $footer = $('<p>').css({margin:'.5em 0 0', display:'flex', gap:'6px'});
 				if ( retryableIds.length > 1 && !s.running ) {
 					var $retryAll = $('<button type="button">').text(R2OFFLOAD_MIG.retryAllLbl)
 						.css({fontSize:'0.75em', padding:'1px 8px', cursor:'pointer'})
@@ -220,6 +225,21 @@ jQuery(function($){
 							next();
 						});
 					$footer.append($retryAll);
+				}
+				if ( list.length && !s.running ) {
+					var $clearAll = $('<button type="button">').text(R2OFFLOAD_MIG.clearAllLbl)
+						.css({fontSize:'0.75em', padding:'1px 8px', cursor:'pointer'})
+						.on('click', function(){
+							if ( !window.confirm(R2OFFLOAD_MIG.clearAllConfirm) ) { return; }
+							$clearAll.prop('disabled', true).text('…');
+							$.post(ajaxurl, { action:'r2offload_migrate_clear_errors', nonce:R2OFFLOAD_MIG.nonce })
+								.done(function(res){
+									if(res && res.success){ render(res.data); }
+									else { $clearAll.prop('disabled', false).text(R2OFFLOAD_MIG.clearAllLbl); }
+								})
+								.fail(function(){ $clearAll.prop('disabled', false).text(R2OFFLOAD_MIG.clearAllLbl); });
+						});
+					$footer.append($clearAll);
 				}
 				$errs.empty().append($h).append($ul).append($footer).show();
 			} else {
@@ -299,6 +319,9 @@ jQuery(function($){
 
 	function clearRunningUI(){ $spinner.removeClass('is-active'); $bar.removeClass('r2offload-running'); $txtWrap.attr('aria-live', 'polite'); }
 	$start.on('click', function(){
+		if ( lastState && (lastState.errors > 0 || (lastState.recent_errors && lastState.recent_errors.length)) ) {
+			if ( !window.confirm(R2OFFLOAD_MIG.startWithErrors) ) { return; }
+		}
 		$.post(ajaxurl, { action:'r2offload_migrate_start', nonce:R2OFFLOAD_MIG.nonce, mode:$mode.val() })
 			.done(function(res){ if(res && res.success){ render(res.data); startPolling(); } else { showError(res, 'Could not start the migration.'); } })
 			.fail(function(){ clearRunningUI(); $txt.text('Connection lost — reload or try again.'); });
@@ -473,6 +496,23 @@ JS;
 			return; // wp_send_json_error already exits; explicit for static analysis.
 		}
 		$this->respond( $result );
+	}
+
+	/**
+	 * AJAX: clear all error entries from the migration state.
+	 */
+	public function ajax_clear_errors() {
+		$this->guard();
+		$state = $this->runner->state();
+		if ( ! empty( $state['running'] ) ) {
+			wp_send_json_error( array( 'message' => __( 'Cannot clear errors while migration is running.', 'r2-stateless-media-offload' ) ) );
+			return; // wp_send_json_error already exits; explicit for static analysis.
+		}
+		$state['recent_errors'] = array();
+		$state['errors']        = 0;
+		$state['errored']       = 0;
+		update_option( Migration_Runner::STATE_OPTION, $state, false );
+		$this->respond( $state );
 	}
 
 	/**
