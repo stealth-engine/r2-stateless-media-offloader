@@ -164,5 +164,24 @@ $r2offload_has_run = $r2offload_running || $r2offload_resumable;
 				</tbody>
 			</table>
 		</details>
+
+		<details style="margin-top:1em;">
+			<summary style="cursor:pointer;"><?php esc_html_e( 'How does the background job work?', 'r2-stateless-media-offload' ); ?></summary>
+			<div style="max-width:46em;margin-top:.5em;">
+				<p><?php esc_html_e( 'Migration runs as a scheduled background task (WP-Cron). You can safely close this tab at any time — the job keeps going on the server and is not tied to your browser session. Come back to this page at any time to check progress; the counts and status reflect the live state of the job.', 'r2-stateless-media-offload' ); ?></p>
+				<table class="widefat striped" style="margin-top:.5em;">
+					<tbody>
+						<tr>
+							<td style="width:6em;"><strong><?php esc_html_e( 'Pause', 'r2-stateless-media-offload' ); ?></strong></td>
+							<td><?php esc_html_e( 'Stops processing after the current batch finishes and saves your position. Click Resume to continue from exactly where you left off — no work is lost.', 'r2-stateless-media-offload' ); ?></td>
+						</tr>
+						<tr>
+							<td><strong><?php esc_html_e( 'Stop', 'r2-stateless-media-offload' ); ?></strong></td>
+							<td><?php esc_html_e( 'Cancels the migration and discards all progress. The next time you click Start the job will begin again from the beginning.', 'r2-stateless-media-offload' ); ?></td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</details>
 	</div>
 </div>
