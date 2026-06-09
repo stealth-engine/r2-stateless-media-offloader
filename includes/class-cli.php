@@ -151,10 +151,7 @@ class CLI {
 		// its in-flight batch and holding the lock. Dry-run/verify are read-only
 		// (HEADs only), so they may run alongside a background migration.
 		if ( ! $dry_run && ! $verify ) {
-			$runner = new Migration_Runner( $settings );
-			if ( ! empty( $runner->state()['running'] ) || $runner->has_active_worker() ) {
-				\WP_CLI::error( 'A background migration is running or finishing a batch (Media → Migrate to R2). Stop it and wait a moment for the current batch to finish before running an upload sync.' );
-			}
+			$this->refuse_if_migration_active( $settings );
 		}
 
 		$batch   = $this->positive_int_arg( $assoc_args, 'batch', 100 );
@@ -219,6 +216,24 @@ class CLI {
 		}
 		if ( is_callable( array( $wp_object_cache, '__remoteset' ) ) ) {
 			$wp_object_cache->__remoteset();
+		}
+	}
+
+	/**
+	 * Error out when a background migration is running or a worker is still
+	 * finishing a batch. CLI commands that write to the library (sync upload,
+	 * pull, reset) do NOT share the background runner's lock, so running them
+	 * alongside an active migration would put two unsynchronised writers on
+	 * the same attachments' _r2offload_* meta. Check BOTH the running flag AND
+	 * the live lock: just after a Stop the run is no longer "running" but a
+	 * worker may still be finishing its in-flight batch and holding the lock.
+	 *
+	 * @param Settings $settings
+	 */
+	private function refuse_if_migration_active( $settings ) {
+		$runner = new Migration_Runner( $settings );
+		if ( ! empty( $runner->state()['running'] ) || $runner->has_active_worker() ) {
+			\WP_CLI::error( 'A background migration is running or finishing a batch (Media → Migrate to R2). Stop it and wait a moment for the current batch to finish before running this command.' );
 		}
 	}
 
@@ -375,6 +390,13 @@ class CLI {
 			\WP_CLI::error( 'R2 not configured. Set R2OFFLOAD_* constants in wp-config.php or via settings.' );
 		}
 		$client = ( ! $dry_run || $settings->is_configured() ) ? Plugin::instance()->client() : null;
+
+		// A live pull deletes _r2offload_* meta that an active background
+		// migration worker writes — same unsynchronised-writers hazard as an
+		// upload sync, so apply the same guard. Dry-run is read-only.
+		if ( ! $dry_run ) {
+			$this->refuse_if_migration_active( $settings );
+		}
 
 		if ( ! $dry_run && empty( $assoc_args['yes'] ) ) {
 			\WP_CLI::confirm(
@@ -603,6 +625,12 @@ class CLI {
 	public function reset( $args, $assoc_args ) {
 		$dry_run = ! empty( $assoc_args['dry-run'] );
 
+		// A live reset deletes _r2offload_* meta that an active background
+		// migration worker writes — refuse to interleave, like sync/pull.
+		if ( ! $dry_run ) {
+			$this->refuse_if_migration_active( Plugin::instance()->settings() );
+		}
+
 		if ( ! $dry_run && empty( $assoc_args['yes'] ) ) {
 			\WP_CLI::confirm(
 				'This removes all R2 offload registration (postmeta) from every attachment. ' .
@@ -620,10 +648,15 @@ class CLI {
 			Settings::META_OBJECTS,
 		);
 
+		// Count/collect over ALL four keys, matching exactly what the live
+		// delete touches: a partially-failed offload can leave e.g. META_KEY
+		// without META_SYNCED, so counting META_SYNCED alone would under-report.
+		$placeholders = implode( ',', array_fill( 0, count( $meta_keys ), '%s' ) );
+
 		if ( $dry_run ) {
-			$count = (int) $wpdb->get_var( $wpdb->prepare(
-				"SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta} WHERE meta_key = %s",
-				Settings::META_SYNCED
+			$count = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- placeholders are literal %s built from a fixed-size array.
+				"SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta} WHERE meta_key IN ({$placeholders})",
+				$meta_keys
 			) );
 			\WP_CLI::log( sprintf( 'Would reset: %d attachment(s)', $count ) );
 			\WP_CLI::success( 'Dry-run complete — nothing changed.' );
@@ -635,8 +668,7 @@ class CLI {
 		// updates; on a persistent object cache (Redis/Memcached) the rewriter
 		// would otherwise keep seeing the attachments as offloaded — and keep
 		// serving R2 URLs — until the cache entries expire.
-		$placeholders = implode( ',', array_fill( 0, count( $meta_keys ), '%s' ) );
-		$post_ids     = $wpdb->get_col( $wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- placeholders are literal %s built from a fixed-size array.
+		$post_ids = $wpdb->get_col( $wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- placeholders are literal %s built from a fixed-size array.
 			"SELECT DISTINCT post_id FROM {$wpdb->postmeta} WHERE meta_key IN ({$placeholders})",
 			$meta_keys
 		) );
