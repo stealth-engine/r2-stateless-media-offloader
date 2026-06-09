@@ -294,17 +294,46 @@ class Migration_Runner {
 			return $state;
 		}
 
-		// Honour the run's mode like run_one_batch() does: a retry from a
-		// dry-run or verify run must stay read-only, and a force run must keep
-		// replacing existing objects.
-		$mode     = isset( $state['mode'] ) ? (string) $state['mode'] : 'upload';
-		$migrator = new Migrator();
-		$migrator->set_dry_run( 'dry-run' === $mode )
-			->set_verify( 'verify' === $mode )
-			->set_force( 'force' === $mode )
-			->set_download_timeout( 300 );
-		$res = $migrator->migrate_attachment( $attachment_id );
+		// Hold the BATCH LOCK for the whole retry. The caller's running /
+		// has_active_worker() guards are only a snapshot: the user can click
+		// Retry and then Resume while this retry is still in flight, and the
+		// resumed run_one_batch() could otherwise process the same attachment
+		// in parallel with this migrator. Under the lock, that worker loses
+		// acquire_lock(), reschedules its tick, and proceeds once we release.
+		if ( ! $this->acquire_lock() ) {
+			// A worker became active between the caller's guard and here —
+			// don't run a second migrator alongside it.
+			return $this->fresh_state();
+		}
+		try {
+			// Honour the run's mode like run_one_batch() does: a retry from a
+			// dry-run or verify run must stay read-only, and a force run must keep
+			// replacing existing objects.
+			$mode     = isset( $state['mode'] ) ? (string) $state['mode'] : 'upload';
+			$migrator = new Migrator();
+			$migrator->set_dry_run( 'dry-run' === $mode )
+				->set_verify( 'verify' === $mode )
+				->set_force( 'force' === $mode )
+				->set_download_timeout( 300 );
+			$res = $migrator->migrate_attachment( $attachment_id );
 
+			return $this->fold_retry_result( $prefix, $res );
+		} finally {
+			// try/finally so the lock is ALWAYS released — a fatal in
+			// migrate_attachment() must never strand it.
+			$this->release_lock();
+		}
+	}
+
+	/**
+	 * Fold a single-attachment retry result into the stored state via CAS.
+	 * Split out of retry_attachment() so the lock-holding section stays small.
+	 *
+	 * @param string $prefix The '[#ID] ' ring-buffer prefix for this attachment.
+	 * @param array  $res    Result array from Migrator::migrate_attachment().
+	 * @return array Updated (persisted) state.
+	 */
+	private function fold_retry_result( $prefix, array $res ) {
 		// Fold the outcome into the FRESHEST state via CAS, like the batch
 		// worker / stop() / cancel(): a worker finishing its in-flight batch
 		// (or a concurrent retry) may persist between our read and our write,
