@@ -456,16 +456,23 @@ class CLI {
 					}
 				}
 
-				// Every file of an attachment lives in _wp_attached_file's uploads
-				// directory. Manifest keys can carry DIFFERENT prefixes (path_prefix
-				// may have changed between offloads), so stripping one inferred
-				// prefix would write older keys to nested wrong paths under uploads
-				// and then clear the registration anyway — 404s after deactivation.
-				// Rebuild each local path from that directory + the key's basename
-				// instead of touching the key's prefix at all.
+				// Map each key's basename back to its uploads-relative LOCAL path.
+				// Manifest keys can carry DIFFERENT prefixes (path_prefix may have
+				// changed between offloads), so stripping one inferred prefix would
+				// misplace older keys. And R2 keys always collapse a size's subdir
+				// to a sibling basename (see Settings::enumerate_files) while the
+				// LOCAL file may live in a subdir carried by the size's 'file'
+				// field — so neither the key's path nor its bare basename is the
+				// local path. enumerate_files() is the single source of truth for
+				// that mapping; backup sizes (absent from live metadata) are bare
+				// basenames in the original's directory, covered by the fallback.
 				$relative_clean = ltrim( $relative_raw, '/' );
 				$relative_dir   = dirname( $relative_clean );
 				$relative_dir   = ( '.' === $relative_dir ) ? '' : trailingslashit( $relative_dir );
+				$local_map      = array();
+				foreach ( Settings::enumerate_files( wp_get_attachment_metadata( $id ), $relative_clean ) as $file ) {
+					$local_map[ $file['filename'] ] = $file['relative'];
+				}
 
 				if ( $dry_run ) {
 					\WP_CLI::log( sprintf( '  #%d: would restore %d file(s)', $id, count( $objects ) ) );
@@ -476,7 +483,9 @@ class CLI {
 				// Download every key in the ownership manifest.
 				$att_errors = array();
 				foreach ( $objects as $key ) {
-					$local_path = $uploads_basedir . $relative_dir . wp_basename( $key );
+					$name       = wp_basename( $key );
+					$local_rel  = isset( $local_map[ $name ] ) ? $local_map[ $name ] : $relative_dir . $name;
+					$local_path = $uploads_basedir . $local_rel;
 
 					// Skip if already restored (idempotent re-runs).
 					if ( file_exists( $local_path ) ) {
@@ -621,6 +630,17 @@ class CLI {
 			return;
 		}
 
+		// Collect the affected post IDs BEFORE deleting so their meta caches can
+		// be invalidated after. Raw DELETEs bypass delete_post_meta()'s cache
+		// updates; on a persistent object cache (Redis/Memcached) the rewriter
+		// would otherwise keep seeing the attachments as offloaded — and keep
+		// serving R2 URLs — until the cache entries expire.
+		$placeholders = implode( ',', array_fill( 0, count( $meta_keys ), '%s' ) );
+		$post_ids     = $wpdb->get_col( $wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- placeholders are literal %s built from a fixed-size array.
+			"SELECT DISTINCT post_id FROM {$wpdb->postmeta} WHERE meta_key IN ({$placeholders})",
+			$meta_keys
+		) );
+
 		$deleted = 0;
 		foreach ( $meta_keys as $key ) {
 			$rows    = (int) $wpdb->query( $wpdb->prepare(
@@ -630,7 +650,11 @@ class CLI {
 			$deleted += $rows;
 		}
 
-		\WP_CLI::success( sprintf( 'Reset complete — removed %d postmeta row(s).', $deleted ) );
+		foreach ( $post_ids as $post_id ) {
+			wp_cache_delete( (int) $post_id, 'post_meta' );
+		}
+
+		\WP_CLI::success( sprintf( 'Reset complete — removed %d postmeta row(s) across %d attachment(s).', $deleted, count( $post_ids ) ) );
 	}
 
 	/**
