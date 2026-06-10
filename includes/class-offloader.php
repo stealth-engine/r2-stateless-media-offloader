@@ -175,10 +175,27 @@ class Offloader {
 				switch_to_blog( $entry['blog'] );
 				$switched = true;
 			}
+			// wp_get_attachment_metadata() can return false (a filter, or a
+			// metadata-less programmatic wp_insert_attachment). Fall back to
+			// the raw stored value, then normalise to an empty array so
+			// offload_now() still handles the original via _wp_attached_file
+			// instead of the entry being silently skipped.
 			$metadata = wp_get_attachment_metadata( $entry['attachment'] );
-			if ( is_array( $metadata ) ) {
-				$this->offload_now( $metadata, $entry['attachment'] );
+			if ( ! is_array( $metadata ) ) {
+				$metadata = get_post_meta( $entry['attachment'], '_wp_attachment_metadata', true );
 			}
+			if ( ! is_array( $metadata ) ) {
+				$metadata = array();
+			}
+			// allow_cleanup=false: shutdown metadata can be PARTIAL — the
+			// request may have died mid-generation, before the generate filter
+			// fired. Marking synced from it is safe (the rewriter only emits
+			// URLs for sizes the metadata lists, and offload_now() confirms
+			// each of those in R2 first), but deleting locals is NOT: the REST
+			// resume may still need the original on disk to generate the
+			// remaining sizes. Stateless locals are cleaned by the next
+			// complete inline pass instead.
+			$this->offload_now( $metadata, $entry['attachment'], false );
 			if ( $switched ) {
 				restore_current_blog();
 			}
@@ -221,9 +238,13 @@ class Offloader {
 	 *
 	 * @param array $metadata      Attachment metadata (passes through unchanged).
 	 * @param int   $attachment_id
+	 * @param bool  $allow_cleanup Whether a Stateless local cleanup may be
+	 *                             queued from this pass. False for the shutdown
+	 *                             backstop, whose metadata snapshot cannot
+	 *                             prove generation finished.
 	 * @return array
 	 */
-	private function offload_now( $metadata, $attachment_id ) {
+	private function offload_now( $metadata, $attachment_id, $allow_cleanup = true ) {
 		if ( ! $this->settings->is_configured() ) {
 			return $metadata;
 		}
@@ -297,7 +318,12 @@ class Offloader {
 			// rewriter stays off and WordPress emits local /uploads URLs, so
 			// deleting the local files would 404 the media. Keep the local copies
 			// (CDN-like) until a custom domain is configured.
-			if ( $is_stateless && $this->settings->serves_public_url() ) {
+			//
+			// $allow_cleanup is false for the shutdown backstop: its metadata
+			// snapshot may be partial (request died mid-generation), and the
+			// REST resume may still need these locals — including the original —
+			// to generate the remaining sizes.
+			if ( $allow_cleanup && $is_stateless && $this->settings->serves_public_url() ) {
 				$this->queue_local_cleanup( $attachment_id, $upload['uploaded_paths'] );
 			}
 
