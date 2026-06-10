@@ -319,7 +319,11 @@ jQuery(function($){
 
 	function clearRunningUI(){ $spinner.removeClass('is-active'); $bar.removeClass('r2offload-running'); $txtWrap.attr('aria-live', 'polite'); }
 	$start.on('click', function(){
-		if ( lastState && (lastState.errors > 0 || (lastState.recent_errors && lastState.recent_errors.length)) ) {
+		// Include errored (attachment-level): Clear All Errors dismisses the
+		// message list (errors/recent_errors) but preserves errored, and the
+		// status line still shows it — Start over those failures should still
+		// confirm.
+		if ( lastState && (lastState.errored > 0 || lastState.errors > 0 || (lastState.recent_errors && lastState.recent_errors.length)) ) {
 			if ( !window.confirm(R2OFFLOAD_MIG.startWithErrors) ) { return; }
 		}
 		$.post(ajaxurl, { action:'r2offload_migrate_start', nonce:R2OFFLOAD_MIG.nonce, mode:$mode.val() })
