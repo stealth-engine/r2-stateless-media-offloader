@@ -121,16 +121,33 @@ class Admin_Settings {
 
 		// Secret: only overwrite when a non-empty value is submitted, so the
 		// "leave blank to keep" password field doesn't wipe a stored secret.
-		// Stored encrypted at rest.
-		if ( ! $this->settings->is_constant( 'secret_key' ) ) {
-			$raw_secret = isset( $_POST['secret_key'] ) ? wp_unslash( $_POST['secret_key'] ) : '';
-			// Cast a crafted array submission to '' (don't warn), then trim — R2
-			// keys are whitespace-free, so trimming only guards against an
-			// accidentally-pasted leading/trailing space or newline.
-			$submitted = is_string( $raw_secret ) ? trim( $raw_secret ) : '';
-			if ( '' !== $submitted ) {
-				$new['secret_key'] = $this->settings->encrypt_secret( $submitted );
+		// Stored as plaintext — use R2OFFLOAD_SECRET_KEY in wp-config.php for
+		// environments that require the key to stay off the database.
+		$raw_secret = isset( $_POST['secret_key'] ) ? wp_unslash( $_POST['secret_key'] ) : '';
+		// Cast a crafted array submission to '' (don't warn), then trim — R2
+		// keys are whitespace-free, so trimming only guards against an
+		// accidentally-pasted leading/trailing space or newline.
+		$submitted = is_string( $raw_secret ) ? trim( $raw_secret ) : '';
+		if ( '' !== $submitted ) {
+			$new['secret_key'] = $submitted;
+		} elseif ( isset( $new['secret_key'] ) && 0 === strpos( (string) $new['secret_key'], 'r2enc:' ) ) {
+			// Auto-migrate: a legacy encrypted blob is still sitting in the DB.
+			// Use decrypt() directly — NOT get() — so constant values never bleed
+			// into the DB.
+			$migrated = $this->settings->decrypt( (string) $new['secret_key'] );
+			if ( '' !== $migrated ) {
+				// Decryption succeeded — store plaintext going forward.
+				$new['secret_key'] = $migrated;
+			} elseif ( defined( 'R2OFFLOAD_SECRET_KEY' ) && '' !== trim( (string) R2OFFLOAD_SECRET_KEY ) ) {
+				// Decryption failed but the constant provides a usable credential.
+				// Drop the undecryptable blob so is_constant() takes over cleanly
+				// and secret_decrypt_failed() stops firing on future requests.
+				// (A defined-but-empty constant is no fallback — keep the blob and
+				// let the notice prompt a re-enter.)
+				unset( $new['secret_key'] );
 			}
+			// Otherwise (no constant, decrypt failed) leave the blob — the admin
+			// notice will prompt the user to re-enter the key.
 		}
 
 		// autoload = false: keep credentials (incl. the encrypted secret) out of

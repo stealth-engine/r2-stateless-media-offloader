@@ -136,6 +136,7 @@ class Migration_Runner {
 			'updated'     => 0,
 			'adopted'     => 0,
 			'skipped'     => 0,
+			'errored'     => 0,
 			'errors'      => 0,
 			'bytes'       => 0,
 			'total'       => 0,
@@ -444,6 +445,7 @@ class Migration_Runner {
 				$state['updated']   += (int) $result['updated'];
 				$state['adopted']   += (int) $result['adopted'];
 				$state['skipped']   += (int) $result['skipped'];
+				$state['errored']   += (int) $result['errored'];
 				$state['errors']    += count( $result['errors'] );
 				$state['pass_errors'] += count( $result['errors'] );
 				$state['bytes']     += (int) $result['bytes'];
@@ -510,11 +512,16 @@ class Migration_Runner {
 				// Re-counting for the new pass so the admin UI reflects the FINAL
 				// pass (library state) rather than the sum across passes — items
 				// that succeed on retry should drop out of these counts. Matches
-				// the WP-CLI summary. uploaded/updated/bytes stay cumulative (real
-				// bytes moved); processed/adopted/skipped describe library state.
+				// the WP-CLI summary. bytes stays cumulative (real data moved);
+				// all attachment-level outcome counters are reset so processed
+				// === uploaded + updated + adopted + skipped + errored holds
+				// within a single pass and the UI totals never exceed processed.
 				$state['processed']     = 0;
+				$state['uploaded']      = 0;
+				$state['updated']       = 0;
 				$state['adopted']       = 0;
 				$state['skipped']       = 0;
+				$state['errored']       = 0;
 				$state['errors']        = 0;
 				$state['recent_errors'] = array(); // Show only the final pass's errors.
 				$state['cursor']        = '';    // Re-scan from the first attachment.

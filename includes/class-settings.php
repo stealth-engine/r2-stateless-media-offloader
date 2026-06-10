@@ -63,74 +63,64 @@ class Settings {
 	/**
 	 * In-memory overrides that take precedence over the stored option (but never
 	 * over a wp-config constant). Used to evaluate a connection test against
-	 * unsaved form values without persisting them. Values are verbatim — a
-	 * secret_key override is PLAINTEXT, not the encrypted-at-rest form.
+	 * unsaved form values without persisting them.
 	 *
 	 * @var array<string,string>
 	 */
 	private $overrides = array();
 
 	/**
-	 * Resolve a setting: constant first, then DB, then default.
+	 * Resolve a setting: in-memory override first, then DB, then wp-config
+	 * constant, then default.
+	 *
+	 * DB wins over constants so values entered in the admin UI always take
+	 * effect. The constant acts as a fallback for wp-config.php-only setups
+	 * where nothing has been saved via the UI.
 	 *
 	 * @param string $key
 	 * @return string
 	 */
 	public function get( $key ) {
-		if ( isset( $this->constants[ $key ] ) && defined( $this->constants[ $key ] ) ) {
-			return (string) constant( $this->constants[ $key ] );
-		}
-		// In-memory override (e.g. testing unsaved form values) — verbatim, so a
-		// secret_key override is returned as-is (plaintext), not decrypted.
+		// In-memory overrides (unsaved form values for connection tests) always win.
 		if ( array_key_exists( $key, $this->overrides ) ) {
 			return $this->overrides[ $key ];
 		}
 		$stored = $this->stored();
 		if ( isset( $stored[ $key ] ) && '' !== $stored[ $key ] ) {
 			$value = (string) $stored[ $key ];
-			// The secret is stored encrypted at rest; decrypt on read.
-			return ( 'secret_key' === $key ) ? $this->decrypt( $value ) : $value;
+			if ( 'secret_key' === $key ) {
+				// Migration: blobs written by the old encrypt_secret() path start with
+				// 'r2enc:'. Decrypt transparently; if decryption fails (rotated salt)
+				// decrypt() returns '' — fall through so a R2OFFLOAD_SECRET_KEY constant
+				// can still serve as the active credential rather than leaving the plugin
+				// unconfigured.
+				$decrypted = $this->decrypt( $value );
+				if ( '' !== $decrypted ) {
+					return $decrypted;
+				}
+				// Decryption failed — fall through to constant / default below.
+			} else {
+				return $value;
+			}
+		}
+		// Constant fallback — used when no DB value has been entered.
+		if ( isset( $this->constants[ $key ] ) && defined( $this->constants[ $key ] ) ) {
+			return (string) constant( $this->constants[ $key ] );
 		}
 		return isset( $this->defaults[ $key ] ) ? $this->defaults[ $key ] : '';
 	}
 
 	/**
-	 * Encrypt a value for storage at rest (used for the secret key).
-	 * Keyed off the site's auth salt. Returns plaintext unchanged if OpenSSL
-	 * is unavailable.
-	 *
-	 * @param string $plain
-	 * @return string
-	 */
-	public function encrypt_secret( $plain ) {
-		if ( '' === $plain ) {
-			return $plain;
-		}
-		if ( ! function_exists( 'openssl_encrypt' ) ) {
-			error_log( 'r2offload: OpenSSL unavailable — R2 secret stored UNENCRYPTED at rest.' ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			return $plain;
-		}
-		// AES-256-GCM (authenticated) — detects tampering, unlike CBC.
-		$key = hash( 'sha256', wp_salt( 'auth' ), true );
-		$iv  = random_bytes( 12 );
-		$tag = '';
-		$cipher = openssl_encrypt( $plain, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag );
-		if ( false === $cipher ) {
-			error_log( 'r2offload: encrypt_secret() failed — R2 secret stored UNENCRYPTED at rest. Check the OpenSSL configuration.' ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			return $plain;
-		}
-		// Versioned marker so the format can evolve without breaking old blobs.
-		return 'r2enc:v2:' . base64_encode( $iv . $tag . $cipher );
-	}
-
-	/**
-	 * Decrypt a stored secret. Values without the marker are treated as
-	 * plaintext (legacy / OpenSSL-unavailable installs).
+	 * Decrypt a stored secret. Values without the 'r2enc:' marker are returned
+	 * as-is (plaintext). Returns '' when the blob cannot be decrypted (e.g. the
+	 * auth salt was rotated) — never falls back to constants or defaults.
+	 * Public so callers that need decrypt-only (no constant fallback) can use it
+	 * directly.
 	 *
 	 * @param string $stored
 	 * @return string
 	 */
-	private function decrypt( $stored ) {
+	public function decrypt( $stored ) {
 		// No marker → legitimate legacy plaintext, return as-is.
 		if ( 0 !== strpos( $stored, 'r2enc:' ) ) {
 			return $stored;
@@ -194,13 +184,19 @@ class Settings {
 	}
 
 	/**
-	 * Whether a setting is locked by a wp-config constant.
+	 * Whether a setting is currently being served from a wp-config constant
+	 * (i.e. no DB value is overriding it). Returns false when a DB value is
+	 * present, even if a constant is also defined — the DB wins in that case.
 	 *
 	 * @param string $key
 	 * @return bool
 	 */
 	public function is_constant( $key ) {
-		return isset( $this->constants[ $key ] ) && defined( $this->constants[ $key ] );
+		if ( ! isset( $this->constants[ $key ] ) || ! defined( $this->constants[ $key ] ) ) {
+			return false;
+		}
+		$stored = $this->stored();
+		return ! ( isset( $stored[ $key ] ) && '' !== (string) $stored[ $key ] );
 	}
 
 	/**
@@ -419,15 +415,26 @@ class Settings {
 	 * @return bool
 	 */
 	public function secret_decrypt_failed() {
-		if ( $this->is_constant( 'secret_key' ) ) {
-			return false; // Constant is plaintext — never "undecryptable".
-		}
 		$stored = $this->stored();
 		$raw    = isset( $stored['secret_key'] ) ? (string) $stored['secret_key'] : '';
-		if ( '' === $raw ) {
-			return false; // Nothing stored.
+		// Nothing stored, or value is already plaintext — no decrypt needed.
+		if ( '' === $raw || 0 !== strpos( $raw, 'r2enc:' ) ) {
+			return false;
 		}
-		return '' === (string) $this->get( 'secret_key' ); // Stored, but decrypts to empty.
+		// Blob decrypts successfully — all good.
+		if ( '' !== $this->decrypt( $raw ) ) {
+			return false;
+		}
+		// Undecryptable blob. If R2OFFLOAD_SECRET_KEY is defined with a usable
+		// (non-empty) value, the constant is already serving as the active
+		// credential (get() falls through to it), so R2 is operational — don't
+		// surface the re-enter notice. A defined-but-empty constant provides no
+		// fallback, so the notice must still fire.
+		if ( isset( $this->constants['secret_key'] ) && defined( $this->constants['secret_key'] )
+			&& '' !== trim( (string) constant( $this->constants['secret_key'] ) ) ) {
+			return false;
+		}
+		return true;
 	}
 
 	/**

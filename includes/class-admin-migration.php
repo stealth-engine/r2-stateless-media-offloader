@@ -93,7 +93,9 @@ jQuery(function($){
 	var $log = $('#r2offload-mig-log');
 	var $logDetails = $('#r2offload-mig-log-details');
 	var polling = false;
-	var pollFailCount = 0; // Consecutive AJAX failures; triggers auto-pause after 3.
+	var pollFailCount = 0;        // Consecutive AJAX failures; triggers auto-pause after threshold.
+	var POLL_MAX_RETRIES    = 3;  // Auto-pause after this many consecutive poll failures.
+	var POLL_RETRY_DELAY_MS = 2000; // Delay between retry attempts (ms).
 	// Track the last rendered tail entry to detect ring-buffer rotation (the
 	// server caps log_entries at 200; once full, length stays 200 while content
 	// keeps sliding, so comparing length alone would stop updates).
@@ -146,7 +148,7 @@ jQuery(function($){
 			'  ·  updated ' + (s.updated || 0) +
 			'  ·  adopted ' + (s.adopted || 0) +
 			'  ·  skipped ' + s.skipped +
-			'  ·  errors ' + s.errors
+			'  ·  errors ' + (s.errored || 0)
 		);
 		$txtWrap.attr('aria-live', s.running ? 'off' : 'polite'); // Suppress aria-live chatter during rapid updates.
 
@@ -167,7 +169,7 @@ jQuery(function($){
 		if ( $errs.length ) {
 			var list = (s.recent_errors && s.recent_errors.length) ? s.recent_errors : [];
 			if ( list.length ) {
-				var $h = $('<p>').css({margin:'0 0 .25em', fontWeight:'600'}).text(R2OFFLOAD_MIG.errorsLbl + ' (' + s.errors + '):');
+				var $h = $('<p>').css({margin:'0 0 .25em', fontWeight:'600'}).text(R2OFFLOAD_MIG.errorsLbl + ' (' + (s.errors || 0) + '):');
 				var $ul = $('<ul>').css({margin:0, paddingLeft:'1.2em'});
 				list.forEach(function(msg){ $ul.append($('<li>').text(msg)); });
 				$errs.empty().append($h).append($ul).show();
@@ -209,9 +211,9 @@ jQuery(function($){
 			})
 			.fail(function(){
 				pollFailCount++;
-				if ( pollFailCount < 3 ) {
+				if ( pollFailCount < POLL_MAX_RETRIES ) {
 					// Brief network hiccup — retry a couple of times before acting.
-					setTimeout(poll, 2000);
+					setTimeout(poll, POLL_RETRY_DELAY_MS);
 					return;
 				}
 				// Persistent connection loss — auto-pause so the server-side run
@@ -224,12 +226,23 @@ jQuery(function($){
 					.done(function(res){
 						if(res && res.success){
 							render(res.data);
-							$txt.text('Paused — connection was lost. Click Resume to continue.');
+							// Only tell the user to Resume if the server confirmed a
+							// resumable (paused) state; if it finished naturally just
+							// before the connection dropped, render() already shows Done.
+							if ( res.data.resumable ) {
+								$txt.text('Paused — connection was lost. Click Resume to continue.');
+							}
 						} else {
-							$txt.text('Connection lost — reload or click Resume to retry.');
+							// Stop request reached the server but was rejected — the run
+							// may still be active. Don't mention Resume here because
+							// render() never ran so the button still reads "Pause".
+							$txt.text('Connection lost — reload to resync the migration state before retrying.');
 						}
 					})
-					.fail(function(){ $txt.text('Connection lost — reload or click Resume to retry.'); });
+					.fail(function(){
+						// Stop request never reached the server — state is unknown.
+						$txt.text('Connection lost — reload to resync the migration state before retrying.');
+					});
 			});
 	}
 	function startPolling(){ if(!polling){ polling = true; pollFailCount = 0; poll(); } }

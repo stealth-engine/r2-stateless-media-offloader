@@ -143,13 +143,14 @@ class Migrator {
 	 */
 	public function migrate_attachment( $attachment_id ) {
 		$result = array(
-			'uploaded' => 0, // New objects (were not in R2).
-			'updated'  => 0, // Existing objects replaced (size mismatch, or forced).
-			'adopted'  => 0, // Already in R2 (correct size); registered to WP for the first time.
-			'skipped'  => 0, // Already in R2 AND already registered by a prior run — no-op.
-			'missing'  => 0, // Source file 404 everywhere (local + URL); nothing to migrate.
-			'bytes'    => 0,
-			'errors'   => array(),
+			'uploaded'     => 0,        // New objects (were not in R2).
+			'updated'      => 0,        // Existing objects replaced (size mismatch, or forced).
+			'adopted'      => 0,        // Already in R2 (correct size); registered to WP for the first time.
+			'skipped'      => 0,        // Already in R2 AND already registered by a prior run — no-op.
+			'missing'      => 0,        // Source file 404 everywhere (local + URL); nothing to migrate.
+			'bytes'        => 0,
+			'errors'       => array(),
+			'written_keys' => array(),  // R2 keys confirmed present this run (for partial-ownership recording).
 		);
 
 		// Whether this attachment was already registered before this run decides
@@ -217,6 +218,40 @@ class Migrator {
 			if ( '' === (string) $first_synced_at ) {
 				update_post_meta( $attachment_id, self::META_SYNCED_AT, time() );
 			}
+		} elseif (
+			! $this->dry_run
+			&& ! $this->verify
+			&& empty( $result['errors'] )
+			&& (int) $result['missing'] > 0
+		) {
+			// Partial run: one or more source variants returned 404/410 so the
+			// attachment is incomplete.
+			if ( $was_synced && 'stateless' === $this->settings->get( 'mode' ) ) {
+				// Stateless: the local copies are gone — the other variants exist
+				// ONLY in R2, so dropping the synced marker would 404 all of them
+				// to fix one. Keep serving from R2 (mirrors the Offloader's
+				// $already_synced && ! $is_stateless gate) and keep the existing
+				// ownership manifest — its keys are still live — merging in any
+				// newly confirmed ones.
+				if ( ! empty( $result['written_keys'] ) ) {
+					Settings::record_objects( $attachment_id, $result['written_keys'] );
+				}
+			} else {
+				// CDN mode (or never synced): local copies are intact, so remove
+				// any prior synced marker and serve everything locally until a
+				// later run restores full R2 coverage. Replace (not merge) the
+				// ownership manifest with only the keys confirmed present this
+				// run — record_objects() merges by default, so stale keys from a
+				// prior full sync would survive without the explicit delete first.
+				if ( $was_synced ) {
+					delete_post_meta( $attachment_id, self::META_SYNCED );
+					delete_post_meta( $attachment_id, self::META_KEY );
+				}
+				delete_post_meta( $attachment_id, Settings::META_OBJECTS );
+				if ( ! empty( $result['written_keys'] ) ) {
+					Settings::record_objects( $attachment_id, $result['written_keys'] );
+				}
+			}
 		}
 
 		return $result;
@@ -271,8 +306,9 @@ class Migrator {
 			'updated'     => 0,
 			'adopted'     => 0,
 			'skipped'     => 0,
+			'errored'     => 0, // Attachment-level error count; processed === sum of all five outcomes.
 			'bytes'       => 0,
-			'errors'      => array(),
+			'errors'      => array(), // Per-item error message strings for the UI.
 			'log'         => array(), // Per-item log lines for the UI activity panel.
 			'next_cursor' => (string) $cursor_id,
 			'done'        => true,
@@ -301,14 +337,23 @@ class Migrator {
 			$aggregate['bytes']      += (int) $res['bytes'];
 			$aggregate['next_cursor'] = (string) $id;
 
-			// Count outcomes at ATTACHMENT level (one per attachment, not one per
-			// size variant) so "processed" and the outcome totals stay comparable in
-			// the UI. bytes stays variant-level (real data moved). Primary outcome:
-			// uploaded > updated > adopted > skipped; missing-source and errors are separate.
+			// Count outcomes at ATTACHMENT level — one per attachment, never per
+			// size variant — so processed === uploaded + updated + adopted + skipped
+			// + errored always holds in the UI. bytes stays variant-level (real data
+			// moved). Priority: errors → missing-source → uploaded → updated →
+			// adopted → skipped. missing is checked before positive outcomes so an
+			// attachment with some variants uploaded and some missing-source is not
+			// counted as "uploaded" (META_SYNCED was not written in that case).
 			if ( ! empty( $res['errors'] ) ) {
+				$aggregate['errored'] += 1;
 				foreach ( $res['errors'] as $err ) {
 					$aggregate['errors'][] = sprintf( '[#%d] %s', $id, $err );
 				}
+			} elseif ( isset( $res['missing'] ) && (int) $res['missing'] > 0 ) {
+				// One or more variants' source returned 404/410 — attachment is
+				// incomplete regardless of any other variants that may have uploaded.
+				// META_SYNCED was not written; file not put in R2.
+				$aggregate['skipped'] += 1;
 			} elseif ( (int) $res['uploaded'] > 0 ) {
 				$aggregate['uploaded'] += 1;
 			} elseif ( (int) $res['updated'] > 0 ) {
@@ -316,16 +361,17 @@ class Migrator {
 			} elseif ( (int) $res['adopted'] > 0 ) {
 				$aggregate['adopted'] += 1;
 			} else {
-				// Covers both true skips (already in R2) and missing-source (file
-				// gone everywhere) — neither has anything to do in R2.
 				$aggregate['skipped'] += 1;
 			}
 
 			// Build a single-line activity log entry for the UI panel.
-			$filename = '';
-			$attached = get_attached_file( $id );
-			if ( false !== $attached && '' !== $attached ) {
-				$filename = basename( $attached );
+			// Use the raw postmeta directly — get_attached_file() triggers a
+			// stateless restore in Local_Fallback, which downloads the file into
+			// the system temp dir just to generate a log label (SWR-332).
+			$filename      = '';
+			$relative_meta = (string) get_post_meta( $id, '_wp_attached_file', true );
+			if ( '' !== $relative_meta ) {
+				$filename = basename( $relative_meta );
 			}
 			if ( '' === $filename ) {
 				$filename = "#$id";
@@ -508,6 +554,7 @@ class Migrator {
 				// Already in R2 and correct: adopt (register for the first time) or
 				// skip (a prior run already registered this attachment).
 				$result[ $was_synced ? 'skipped' : 'adopted' ] += 1;
+				$result['written_keys'][] = $key; // Confirmed present in R2 this run.
 				return;
 			}
 			// else: size unverifiable/mismatched — fall through and re-upload (Updated).
@@ -539,15 +586,26 @@ class Migrator {
 			}
 			$downloaded = $this->download_to_tempfile( $url );
 			if ( is_wp_error( $downloaded ) ) {
-				// A 4xx response means the source file is gone (deleted, moved, or
-				// never there) — treat as "missing source" rather than a retryable
-				// error so the attachment doesn't block migration completion on every
-				// run. META_SYNCED is not written (nothing was put in R2).
-				if ( preg_match( '/^http_4\d\d$/', (string) $downloaded->get_error_code() ) ) {
+				// download_url() always returns error code 'http_404' for ANY
+				// non-200 response (WP Trac #60564). The only reliable source for
+				// the actual HTTP status is error_data['code']. Do NOT fall back to
+				// parsing the error code string: since core always emits 'http_404',
+				// the string parse would misclassify 403/5xx failures as missing
+				// source (404) and silently skip them instead of keeping them
+				// retryable. If error_data is absent, $http_status stays 0 and we
+				// fall through to $result['errors'] — safe conservative default.
+				$err_data    = $downloaded->get_error_data();
+				$http_status = ( is_array( $err_data ) && isset( $err_data['code'] ) )
+					? (int) $err_data['code']
+					: 0;
+				// Only 404 (Not Found) and 410 (Gone) definitively mean the source
+				// file is gone. Other 4xx (401/403/429), 5xx, and unknown (0) are
+				// potentially recoverable — treat as errors so they can be retried.
+				if ( 404 === $http_status || 410 === $http_status ) {
 					$result['missing'] += 1;
-				} else {
-					$result['errors'][] = sprintf( '%s: %s', $key, $downloaded->get_error_message() );
+					return;
 				}
+				$result['errors'][] = sprintf( '%s: %s', $key, $downloaded->get_error_message() );
 				return;
 			}
 			$tmp        = $downloaded; // Narrowed to string by the is_wp_error() guard above.
@@ -581,6 +639,7 @@ class Migrator {
 
 		$result[ $existed ? 'updated' : 'uploaded' ] += 1;
 		$result['bytes']                             += $size_bytes;
+		$result['written_keys'][]                     = $key; // Written to R2 this run.
 	}
 
 	/**
