@@ -499,7 +499,9 @@ JS;
 	}
 
 	/**
-	 * AJAX: clear all error entries from the migration state.
+	 * AJAX: dismiss the recent-errors panel (clears the message list/counter;
+	 * attachment-level outcome accounting is preserved — see
+	 * Migration_Runner::clear_errors()).
 	 */
 	public function ajax_clear_errors() {
 		$this->guard();
@@ -508,11 +510,14 @@ JS;
 			wp_send_json_error( array( 'message' => __( 'Cannot clear errors while migration is running.', 'r2-stateless-media-offload' ) ) );
 			return; // wp_send_json_error already exits; explicit for static analysis.
 		}
-		$state['recent_errors'] = array();
-		$state['errors']        = 0;
-		$state['errored']       = 0;
-		update_option( Migration_Runner::STATE_OPTION, $state, false );
-		$this->respond( $state );
+		// Same paused-but-batch-still-finishing window as ajax_retry: a worker
+		// holding the lock may still be appending errors; clearing concurrently
+		// would race its state writes.
+		if ( $this->runner->has_active_worker() ) {
+			wp_send_json_error( array( 'message' => __( 'A migration batch is still finishing — try again in a moment.', 'r2-stateless-media-offload' ) ) );
+			return; // wp_send_json_error already exits; explicit for static analysis.
+		}
+		$this->respond( $this->runner->clear_errors() );
 	}
 
 	/**
