@@ -4,7 +4,7 @@ Tags: cloudflare, r2, media offload, s3, cdn
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.2.0
+Stable tag: 0.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -53,6 +53,12 @@ Yes. The migrator pulls each attachment from wherever it currently lives — loc
 No. If your media is already in R2 (for example, copied from Google Cloud Storage using Cloudflare's R2 data migration, also known as Super Slurper), just run the migration. Files already present in R2 are detected and registered without re-uploading — nothing is copied twice — and the plugin starts serving them from R2.
 
 == Changelog ==
+
+= 0.2.1 =
+* Fixed: `wp r2offload reset` aborts with a clear error if a database delete fails mid-run (re-run to resume) instead of reporting success.
+* Fixed: `wp r2offload pull` accepts files already on disk when validating legacy registrations (CDN mode / partial-restore re-runs) instead of erroring, and its counts no longer include files that needed no download.
+* Fixed: Retry All button is restored when every retry fails, rather than staying stuck disabled.
+* Fixed: the Start confirmation now works even when clicked before the first status poll completes.
 
 = 0.2.0 =
 * Background migration UI (Media → Migrate to R2): resumable WP-Cron-driven runs with live progress, Pause/Resume/Stop, activity log, and a "How does the background job work?" explainer.
