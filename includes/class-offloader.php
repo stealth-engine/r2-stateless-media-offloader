@@ -66,13 +66,14 @@ class Offloader {
 	}
 
 	/**
-	 * Drop the per-request offload dedupe and generation flags. Hooked on
-	 * `switch_blog` (see Plugin): both are keyed by attachment ID, which is NOT
-	 * unique across a multisite network, so a cached ID must not survive a
-	 * switch to another blog and suppress a legitimate upload there. Also
-	 * bounds memory in a long-lived CLI process that switches between many
-	 * sites. (The deferred-generation queue and cleanup queue carry their blog
-	 * id per entry, so they survive switches and flush correctly.)
+	 * Drop the per-request offload dedupe. Hooked on `switch_blog` (see
+	 * Plugin): it is keyed by attachment ID, which is NOT unique across a
+	 * multisite network, so a cached ID must not survive a switch to another
+	 * blog and suppress a legitimate upload there. Also bounds memory in a
+	 * long-lived CLI process that switches between many sites. The
+	 * deferred-generation ($generating) and cleanup queues are deliberately
+	 * NOT cleared: their entries carry the blog id and are flushed under the
+	 * right site at shutdown.
 	 */
 	public function flush_request_cache() {
 		$this->offloaded = array();
@@ -331,15 +332,20 @@ class Offloader {
 			// (CDN-like) until a custom domain is configured.
 			if ( $is_stateless && $this->settings->serves_public_url() ) {
 				$cleanup_paths = $upload['uploaded_paths'];
-				if ( ! $allow_cleanup ) {
-					// Shutdown-backstop pass: the metadata snapshot cannot prove
-					// generation finished, and a future REST post-process resume
-					// regenerates missing sub-sizes FROM THE ORIGINAL — so the
-					// original must stay on disk until a complete inline pass
-					// confirms generation is done. Confirmed-uploaded SIZE files
-					// are safe to clean even here: a resume never reads existing
-					// size files (sizes already in metadata are skipped, missing
-					// ones are recreated from the original).
+				// Shutdown-backstop pass for an IMAGE: the metadata snapshot
+				// cannot prove generation finished, and a future REST
+				// post-process resume (or a two-step importer's later
+				// wp_generate_attachment_metadata request) regenerates missing
+				// sub-sizes FROM THE ORIGINAL — so an image's original must
+				// stay on disk until a complete inline pass confirms
+				// generation is done. Confirmed-uploaded SIZE files are safe
+				// to clean even here: a resume never reads existing size files
+				// (sizes already in metadata are skipped, missing ones are
+				// recreated from the original). Non-image attachments never
+				// have a generation pass, so their original is cleaned from
+				// the backstop too — without this they would quietly keep
+				// CDN-like local copies on every backstop-only flow.
+				if ( ! $allow_cleanup && wp_attachment_is_image( $attachment_id ) ) {
 					$cleanup_paths = array();
 					foreach ( $upload['uploaded_paths'] as $uploaded_path ) {
 						if ( isset( $pending[ $uploaded_path ] ) && $pending[ $uploaded_path ] !== $original_key ) {
