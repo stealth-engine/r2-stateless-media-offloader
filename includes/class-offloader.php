@@ -20,12 +20,28 @@ class Offloader {
 	private $settings;
 
 	/**
-	 * Attachment IDs already offloaded this request, so the two metadata filters
-	 * (see register()) don't upload every variant twice on a normal upload.
+	 * R2 keys already uploaded this request, per attachment, so repeated
+	 * metadata-filter firings don't re-send the same object. Keyed PER KEY —
+	 * not per attachment — because since WP 5.3 wp_create_image_subsizes()
+	 * fires wp_update_attachment_metadata once with NO sizes and again after
+	 * EACH generated sub-size: a per-attachment flag set on the first firing
+	 * (original only) would suppress every later firing and the thumbnails
+	 * would never reach R2 while the attachment was already marked synced —
+	 * 404s on every size URL.
 	 *
-	 * @var array<int,bool>
+	 * @var array<int,array<string,bool>>  attachment_id => set of uploaded keys.
 	 */
 	private $offloaded = array();
+
+	/**
+	 * Local paths queued for Stateless-mode deletion at shutdown. Deferred —
+	 * NOT deleted inline — because during incremental sub-size generation
+	 * WordPress still reads the original file to produce the remaining sizes;
+	 * deleting it mid-generation would abort the rest of the thumbnails.
+	 *
+	 * @var string[]
+	 */
+	private $cleanup_queue = array();
 
 	/**
 	 * @param R2_Client $client
@@ -88,16 +104,6 @@ class Offloader {
 			return $metadata;
 		}
 
-		// Both wp_generate_attachment_metadata and wp_update_attachment_metadata
-		// fire on a normal upload; skip the second firing so we don't push every
-		// object twice. Only a SUCCESSFUL offload records this (see below): if the
-		// first hook's upload fails transiently, the second must still be free to
-		// retry. Image edits fire only the update filter (on their own request,
-		// with an empty map here), so they're unaffected.
-		if ( isset( $this->offloaded[ $attachment_id ] ) ) {
-			return $metadata;
-		}
-
 		$original_relative = isset( $metadata['file'] )
 			? $metadata['file']
 			: (string) get_post_meta( $attachment_id, '_wp_attached_file', true );
@@ -106,78 +112,124 @@ class Offloader {
 		$already_synced = (bool) get_post_meta( $attachment_id, Settings::META_SYNCED, true );
 		$is_stateless   = 'stateless' === $this->settings->get( 'mode' );
 
-		$cache_control = $this->settings->get( 'cache_control' );
-		$headers       = ( '' !== $cache_control ) ? array( 'Cache-Control' => $cache_control ) : array();
-
-		$upload = $this->upload_variants( $files, $original_key, $headers );
-
-		// Record every key that actually reached R2 into the attachment's ownership
-		// manifest — BEFORE the partial-failure bail below. Even when a sibling
-		// variant fails, the objects that DID upload exist and this attachment owns
-		// them, so a later delete must still reap them (SWR-333); recording only on
-		// full success would orphan the uploaded subset. $files maps local path =>
-		// key; resolve the uploaded paths back to their keys. record_objects() is a
-		// no-op on an empty list.
-		$uploaded_keys = array();
-		foreach ( $upload['uploaded_paths'] as $uploaded_path ) {
-			if ( isset( $files[ $uploaded_path ] ) ) {
-				$uploaded_keys[] = $files[ $uploaded_path ];
+		// Per-KEY dedupe across this request's many metadata-filter firings.
+		// Since WP 5.3, wp_create_image_subsizes() fires
+		// wp_update_attachment_metadata once with NO sizes and again after EACH
+		// generated sub-size (plus the final wp_generate_attachment_metadata
+		// pass). Each firing uploads only the keys it hasn't sent yet, so every
+		// thumbnail goes up in the same firing that records it in metadata, and
+		// R2 always contains everything the saved metadata references. A failed
+		// key is NOT recorded, so a later firing retries it.
+		$done    = isset( $this->offloaded[ $attachment_id ] ) ? $this->offloaded[ $attachment_id ] : array();
+		$pending = array();
+		foreach ( $files as $local_path => $key ) {
+			if ( ! isset( $done[ $key ] ) ) {
+				$pending[ $local_path ] = $key;
 			}
 		}
-		Settings::record_objects( $attachment_id, $uploaded_keys );
 
-		if ( $upload['failed'] ) {
-			// Leave the dedupe flag UNSET so the sibling wp_update_attachment_metadata
-			// hook in this same upload request can retry — a transient R2 error on the
-			// first hook must not permanently suppress the second.
-			// A variant failed to reach R2. If this attachment was already synced
-			// (e.g. a re-offload after a new image size was added), the URL
-			// rewriter would keep serving every size from R2 and the missing one
-			// 404s. In CDN mode the local copies are intact, so drop the synced
-			// flag to serve everything locally until a later offload restores
-			// full R2 coverage. In Stateless mode the other variants live only in
-			// R2, so un-syncing would 404 them instead — keep serving from R2 and
-			// let the next pass retry. Either way, leave local copies in place.
-			if ( $already_synced && ! $is_stateless ) {
-				delete_post_meta( $attachment_id, Settings::META_SYNCED );
+		if ( ! empty( $pending ) ) {
+			$cache_control = $this->settings->get( 'cache_control' );
+			$headers       = ( '' !== $cache_control ) ? array( 'Cache-Control' => $cache_control ) : array();
+
+			$upload = $this->upload_variants( $pending, $original_key, $headers );
+
+			// Record every key that actually reached R2 into the attachment's
+			// ownership manifest AND the per-request dedupe — BEFORE the
+			// partial-failure bail below. Even when a sibling variant fails, the
+			// objects that DID upload exist and this attachment owns them, so a
+			// later delete must still reap them (SWR-333), and a later firing
+			// must not re-send them. record_objects() is a no-op on an empty list.
+			$uploaded_keys = array();
+			foreach ( $upload['uploaded_paths'] as $uploaded_path ) {
+				if ( isset( $pending[ $uploaded_path ] ) ) {
+					$uploaded_keys[]                    = $pending[ $uploaded_path ];
+					$done[ $pending[ $uploaded_path ] ] = true;
+				}
 			}
-			return $metadata;
+			Settings::record_objects( $attachment_id, $uploaded_keys );
+			$this->offloaded[ $attachment_id ] = $done;
+
+			if ( $upload['failed'] ) {
+				// A variant failed to reach R2 (its key stays un-recorded, so a
+				// later firing retries it). If this attachment was already synced
+				// (e.g. a re-offload after a new image size was added), the URL
+				// rewriter would keep serving every size from R2 and the missing
+				// one 404s. In CDN mode the local copies are intact, so drop the
+				// synced flag to serve everything locally until a later offload
+				// restores full R2 coverage. In Stateless mode the other variants
+				// live only in R2, so un-syncing would 404 them instead — keep
+				// serving from R2 and let the next pass retry. Either way, leave
+				// local copies in place.
+				if ( $already_synced && ! $is_stateless ) {
+					delete_post_meta( $attachment_id, Settings::META_SYNCED );
+				}
+				return $metadata;
+			}
 		}
 
-		// Upload succeeded (no variant errored). Dedupe the sibling metadata filter
-		// in this request ONLY if something actually reached R2: a pass where every
-		// variant was skipped as unreadable sent nothing, so the later
-		// wp_update_attachment_metadata pass (which may run after guard_temp_metadata
-		// repairs metadata['file']) must stay free to offload the corrected files.
-		if ( ! empty( $upload['uploaded_paths'] ) ) {
-			$this->offloaded[ $attachment_id ] = true;
+		// Fully present = the original AND every file the CURRENT metadata
+		// references is confirmed in R2 this request. Evaluated on every firing
+		// (including no-op ones) because the verdict changes as metadata grows
+		// during incremental sub-size generation; a variant skipped as
+		// unreadable is simply absent from $done, so it fails this check and
+		// the attachment is not flagged.
+		$fully_present = isset( $done[ $original_key ] );
+		foreach ( $files as $key ) {
+			if ( ! isset( $done[ $key ] ) ) {
+				$fully_present = false;
+				break;
+			}
 		}
-
-		$fully_present = ( $upload['original_uploaded'] && $upload['all_present'] );
 
 		// Only mark the attachment offloaded once the ORIGINAL and every size
 		// are in R2 — a stray size upload (or a skipped, missing variant) must
-		// not flag media that isn't fully present.
+		// not flag media that isn't fully present. Idempotent on re-firings.
 		if ( $fully_present ) {
 			$this->mark_synced( $attachment_id, $original_key );
 		}
 
-		// Stateless mode: drop the local copies we just uploaded — each is
-		// confirmed in R2. Gate on the attachment being served from R2 (synced
-		// now or already), NOT on $all_present: on a re-offload (e.g. thumbnail
-		// regeneration) the original lives only in R2, so $all_present is false,
-		// but newly generated size files must still be cleaned up. Never strip
-		// locals for media that isn't synced — it's still served from disk.
+		// Stateless mode: queue the local copies we uploaded for deletion at
+		// SHUTDOWN — each is confirmed in R2, but WordPress may still need the
+		// original on disk to generate the remaining sub-sizes, so deleting
+		// inline mid-generation would abort the rest of the thumbnails. Gate on
+		// the attachment being served from R2 (synced now or already). Never
+		// strip locals for media that isn't synced — it's still served from disk.
 		//
 		// Also require a public serving URL: without a custom domain the URL
 		// rewriter stays off and WordPress emits local /uploads URLs, so
 		// deleting the local files would 404 the media. Keep the local copies
 		// (CDN-like) until a custom domain is configured.
-		if ( $is_stateless && $this->settings->serves_public_url() && ( $fully_present || $already_synced ) ) {
-			$this->cleanup_locals( $upload['uploaded_paths'] );
+		if ( ! empty( $pending ) && $is_stateless && $this->settings->serves_public_url() && ( $fully_present || $already_synced ) ) {
+			$this->queue_local_cleanup( $upload['uploaded_paths'] );
 		}
 
 		return $metadata;
+	}
+
+	/**
+	 * Queue confirmed-in-R2 local copies for deletion when the request ends.
+	 * add_action() dedupes an identical callback, so repeated queuing across
+	 * firings registers the shutdown handler once.
+	 *
+	 * @param string[] $paths
+	 */
+	private function queue_local_cleanup( array $paths ) {
+		if ( empty( $paths ) ) {
+			return;
+		}
+		$this->cleanup_queue = array_merge( $this->cleanup_queue, $paths );
+		add_action( 'shutdown', array( $this, 'flush_local_cleanup' ) );
+	}
+
+	/**
+	 * Shutdown handler: delete the queued local copies (Stateless cleanup of
+	 * confirmed uploads). Public because it's a hook callback.
+	 */
+	public function flush_local_cleanup() {
+		$queue               = array_unique( $this->cleanup_queue );
+		$this->cleanup_queue = array();
+		$this->cleanup_locals( $queue );
 	}
 
 	/**
