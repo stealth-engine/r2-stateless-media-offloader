@@ -225,9 +225,19 @@ class Offloader {
 			// Generation (if any) is complete — this firing carries the full
 			// metadata. Clear the flag and upload now.
 			unset( $this->generating[ $k ] );
-		} elseif ( isset( $this->generating[ $k ] ) ) {
-			// Incremental mid-generation firing — defer (final firing or the
-			// shutdown backstop will upload everything in one pass).
+		} elseif ( isset( $this->generating[ $k ] ) && ! get_post_meta( (int) $attachment_id, Settings::META_SYNCED, true ) ) {
+			// Incremental mid-generation firing for an UNSYNCED attachment —
+			// defer (final firing or the shutdown backstop will upload
+			// everything in one pass). Nothing references the attachment from
+			// R2 yet, so metadata may safely run ahead of the bucket.
+			//
+			// An already-SYNCED attachment (a resume after a backstop-synced
+			// interrupted upload, or a thumbnail regeneration) must NOT defer:
+			// each incremental save publishes the new size into metadata the
+			// rewriter is already serving from R2, so the object has to be in
+			// the bucket BEFORE that save lands. Falling through uploads
+			// inline per key — this filter runs before the metadata write, so
+			// the object always precedes the URL.
 			return $metadata;
 		}
 		return $this->offload_now( $metadata, $attachment_id );
