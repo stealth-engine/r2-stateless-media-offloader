@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="R2 Stateless Media Offloader" width="420">
+  <img src="assets/cover.png" alt="R2 Stateless Media Offloader" width="100%">
 </p>
 
 <h1 align="center">R2 Stateless Media Offloader</h1>
