@@ -1,10 +1,20 @@
-# R2 Stateless Media Offloader
+<p align="center">
+  <img src="assets/logo.png" alt="R2 Stateless Media Offloader" width="420">
+</p>
 
-Offload your WordPress media library to **Cloudflare R2** — zero egress fees, S3-compatible, and stateless. A clean-room, open-source alternative to wp-stateless, built for R2.
+<h1 align="center">R2 Stateless Media Offloader</h1>
 
-[![License: GPLv2+](https://img.shields.io/badge/License-GPLv2--or--later-blue.svg)](https://www.gnu.org/licenses/gpl-2.0)
-[![WordPress](https://img.shields.io/badge/WordPress-6.0%2B-21759b.svg)](https://wordpress.org/)
-[![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4.svg)](https://www.php.net/)
+<p align="center">
+  <strong>Offload your WordPress media library to Cloudflare R2.</strong><br>
+  Zero egress fees · S3-compatible · stateless — a clean-room, open-source alternative to wp-stateless, built for R2.
+</p>
+
+<p align="center">
+  <a href="https://www.gnu.org/licenses/gpl-2.0"><img alt="License: GPLv2-or-later" src="https://img.shields.io/badge/License-GPLv2--or--later-blue.svg"></a>
+  <a href="https://wordpress.org/"><img alt="WordPress 6.0+" src="https://img.shields.io/badge/WordPress-6.0%2B-21759b.svg"></a>
+  <a href="https://www.php.net/"><img alt="PHP 7.4+" src="https://img.shields.io/badge/PHP-7.4%2B-777bb4.svg"></a>
+  <a href="https://developers.cloudflare.com/r2/"><img alt="Cloudflare R2" src="https://img.shields.io/badge/Cloudflare-R2-f38020.svg"></a>
+</p>
 
 ---
 
