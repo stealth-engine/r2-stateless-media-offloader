@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Offload your WordPress media library to Cloudflare R2.</strong><br>
-  Zero egress fees · S3-compatible · stateless — a clean-room, open-source alternative to wp-stateless, built for R2.
+  Zero egress fees · stateless · built for ephemeral/containerized WordPress — a clean-room, open-source alternative to wp-stateless, built for R2.
 </p>
 
 <p align="center">
@@ -30,7 +30,7 @@ This plugin offloads your media library to R2 and serves it from your own custom
 - **Two operating modes:**
   - **CDN** — keep local copies as a fallback. The safe on-ramp.
   - **Stateless** — remove local copies; media lives only in R2.
-- **S3-compatible** with native AWS Signature V4 — no AWS SDK dependency, built entirely on the WordPress HTTP API.
+- **Built on R2's S3-compatible API** with native AWS Signature V4 — no AWS SDK dependency, just the WordPress HTTP API. (R2-specific, not a generic multi-provider S3 client.)
 - **Complete size coverage** — offloads the original plus every registered intermediate size, including theme- and plugin-defined custom sizes.
 - **Non-destructive** — URLs are rewritten at render time. Your database and post content are never modified, so deactivating the plugin cleanly reverts to default behaviour.
 - **Universal migrator** — move an existing library to R2 from anywhere: local disk, Google Cloud Storage (wp-stateless), or S3 (WP Offload Media).

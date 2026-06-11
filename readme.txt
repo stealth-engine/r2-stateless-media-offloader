@@ -8,7 +8,7 @@ Stable tag: 0.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Offload your WordPress media library to Cloudflare R2 — zero egress fees, S3-compatible, stateless. A clean-room alternative to wp-stateless built for R2.
+Offload your WordPress media to Cloudflare R2 — zero egress fees, stateless. A clean-room, open-source alternative to wp-stateless.
 
 == Description ==
 
@@ -20,7 +20,7 @@ Built for **stateless** operation: nothing persists on the server, making it ide
 
 * Zero-egress media serving via Cloudflare R2 and your own custom domain
 * Two modes — CDN (keep local copies as fallback) and Stateless (media lives only in R2)
-* S3-compatible, AWS Signature V4 — no AWS SDK dependency
+* Built on R2's S3-compatible API (AWS Signature V4) — no AWS SDK dependency (R2-specific, not a generic multi-provider client)
 * Catches every registered image size, including theme/plugin custom sizes
 * Non-destructive — URLs are rewritten at render time; your database and post content are never modified
 * Universal migrator — move existing media to R2 from local disk, GCS (wp-stateless), or S3 (WP Offload Media)
