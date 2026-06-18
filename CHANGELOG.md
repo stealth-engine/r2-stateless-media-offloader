@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/stealth-engine/r2-stateless-media-offloader/compare/v0.3.3...v0.3.4) (2026-06-17)
+
+
+### Bug Fixes
+
+* front-end fatal — wp_tempnam() not loaded outside wp-admin ([#16](https://github.com/stealth-engine/r2-stateless-media-offloader/issues/16)) ([dcd95c5](https://github.com/stealth-engine/r2-stateless-media-offloader/commit/dcd95c56618210dcc08d0f9e555bd2ef5288fe61))
+
 ## [0.3.3](https://github.com/stealth-src/r2-stateless-media-offloader/compare/v0.3.2...v0.3.3) (2026-06-14)
 
 
